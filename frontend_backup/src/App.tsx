@@ -8,19 +8,17 @@ class ErrorBoundary extends Component<{children: ReactNode}, {error: string | nu
   static getDerivedStateFromError(e: Error) { return { error: e.message } }
   render() {
     if (this.state.error) return (
-      <div style={{color:'#E07070',padding:40,fontFamily:'"DM Sans",sans-serif',background:'#000',minHeight:'100vh'}}>
-        <h1 style={{color:'#E8DCC8'}}>INIPoker</h1>
-        <p style={{marginTop:12}}>App crashed: {this.state.error}</p>
-        <button onClick={() => window.location.reload()} style={{marginTop:16,padding:'8px 16px',cursor:'pointer',background:'#161616',color:'#fff',border:'1px solid #2a2a2a',borderRadius:6,fontFamily:'inherit'}}>Reload</button>
+      <div style={{color:'#e74c3c',padding:40,fontFamily:'monospace',background:'#0a0c10',minHeight:'100vh'}}>
+        <h1 style={{color:'#d4af37'}}>INIPoker</h1>
+        <p>App crashed: {this.state.error}</p>
+        <button onClick={() => window.location.reload()} style={{marginTop:16,padding:'8px 16px',cursor:'pointer'}}>Reload</button>
       </div>
     )
     return this.props.children
   }
 }
 
-type View =
-  | { page: 'lobby' }
-  | { page: 'table', tableId: number, bigBlind: number, tableName: string }
+type View = { page: 'lobby' } | { page: 'table', tableId: number }
 
 function AppRouter() {
   const [view, setView] = useState<View>({ page: 'lobby' })
@@ -29,15 +27,13 @@ function AppRouter() {
     return (
       <PokerTable
         tableId={BigInt(view.tableId)}
-        bigBlind={view.bigBlind}
-        tableName={view.tableName}
         onBack={() => setView({ page: 'lobby' })}
       />
     )
   }
 
   return (
-    <Lobby onJoinTable={(id, bigBlind, tableName) => setView({ page: 'table', tableId: id, bigBlind, tableName })} />
+    <Lobby onJoinTable={(id) => setView({ page: 'table', tableId: id })} />
   )
 }
 

@@ -11,32 +11,32 @@ import { useWalletBalance } from '../hooks/useWalletBalance'
 // ═══════════════════════════════════════════════════════════
 
 type GameType = 'holdem' | 'omaha'
-interface Table { id: number; name: string; type: GameType; blinds: string; buyIn: string; players: number; max: number; avgPot: string; flop: string; hhr: number; featured?: boolean }
+interface Table { id: number; name: string; type: GameType; blinds: string; smallBlind: number; bigBlind: number; buyIn: string; players: number; max: number; avgPot: string; flop: string; hhr: number; featured?: boolean }
 interface Tournament { id: number; name: string; type: GameType; buyIn: number; prize: number; registered: number; minPlayers: number; startingStack: number; blindLevel: string; nextStart: string; vip?: boolean }
 
+// ── TEST TABLES (tiny blinds for easy testing) ──
+const TEST_TABLES: Table[] = [
+  { id: 0, name: 'Test Micro 01', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0, featured: true },
+  { id: 1, name: 'Test Micro 02', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0 },
+]
+
 const HOLDEM_TABLES: Table[] = [
-  { id: 0, name: 'Diamond 01', type: 'holdem', blinds: '25/50', buyIn: '5,000', players: 5, max: 6, avgPot: '420', flop: '48%', hhr: 103, featured: true },
-  { id: 1, name: 'Emerald 01', type: 'holdem', blinds: '5/10', buyIn: '1,000', players: 4, max: 6, avgPot: '136', flop: '54%', hhr: 112 },
-  { id: 2, name: 'Emerald 02', type: 'holdem', blinds: '5/10', buyIn: '1,000', players: 3, max: 6, avgPot: '98', flop: '50%', hhr: 108 },
-  { id: 3, name: 'Ruby 01', type: 'holdem', blinds: '2/4', buyIn: '400', players: 6, max: 6, avgPot: '45', flop: '44%', hhr: 96 },
-  { id: 4, name: 'Ruby 02', type: 'holdem', blinds: '2/4', buyIn: '400', players: 4, max: 6, avgPot: '38', flop: '46%', hhr: 99 },
-  { id: 5, name: 'Onyx 01', type: 'holdem', blinds: '1/2', buyIn: '200', players: 3, max: 6, avgPot: '21', flop: '49%', hhr: 90 },
-  { id: 6, name: 'Onyx 02', type: 'holdem', blinds: '1/2', buyIn: '200', players: 2, max: 6, avgPot: '18', flop: '39%', hhr: 104 },
-  { id: 7, name: 'Onyx 03', type: 'holdem', blinds: '1/2', buyIn: '200', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0 },
+  { id: 10, name: 'Emerald 01', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 4, max: 6, avgPot: '136', flop: '54%', hhr: 112 },
+  { id: 11, name: 'Emerald 02', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 3, max: 6, avgPot: '98', flop: '50%', hhr: 108 },
+  { id: 12, name: 'Ruby 01', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 5, max: 6, avgPot: '420', flop: '48%', hhr: 103, featured: true },
+  { id: 13, name: 'Ruby 02', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 4, max: 6, avgPot: '380', flop: '46%', hhr: 99 },
+  { id: 14, name: 'Onyx 01', type: 'holdem', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 3, max: 6, avgPot: '1,200', flop: '42%', hhr: 90 },
 ]
 
 const OMAHA_TABLES: Table[] = [
-  { id: 20, name: 'Omaha Diamond', type: 'omaha', blinds: '25/50', buyIn: '5,000', players: 4, max: 6, avgPot: '580', flop: '62%', hhr: 88, featured: true },
-  { id: 21, name: 'Omaha Emerald', type: 'omaha', blinds: '5/10', buyIn: '1,000', players: 3, max: 6, avgPot: '190', flop: '58%', hhr: 95 },
-  { id: 22, name: 'Omaha Ruby 01', type: 'omaha', blinds: '2/4', buyIn: '400', players: 5, max: 6, avgPot: '62', flop: '55%', hhr: 92 },
-  { id: 23, name: 'Omaha Ruby 02', type: 'omaha', blinds: '2/4', buyIn: '400', players: 2, max: 6, avgPot: '48', flop: '51%', hhr: 90 },
-  { id: 24, name: 'Omaha Onyx 01', type: 'omaha', blinds: '1/2', buyIn: '200', players: 4, max: 6, avgPot: '28', flop: '53%', hhr: 86 },
-  { id: 25, name: 'Omaha Onyx 02', type: 'omaha', blinds: '1/2', buyIn: '200', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0 },
+  { id: 20, name: 'Omaha Emerald', type: 'omaha', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 3, max: 6, avgPot: '190', flop: '58%', hhr: 95 },
+  { id: 21, name: 'Omaha Ruby', type: 'omaha', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 5, max: 6, avgPot: '580', flop: '62%', hhr: 88, featured: true },
+  { id: 22, name: 'Omaha Onyx', type: 'omaha', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 2, max: 6, avgPot: '2,800', flop: '55%', hhr: 82 },
 ]
 
 const VIP_TABLES: Table[] = [
-  { id: 30, name: 'VIP Holdem', type: 'holdem', blinds: '500/1,000', buyIn: '100,000', players: 3, max: 6, avgPot: '12,500', flop: '42%', hhr: 72, featured: true },
-  { id: 31, name: 'VIP Omaha', type: 'omaha', blinds: '500/1,000', buyIn: '100,000', players: 2, max: 6, avgPot: '18,200', flop: '58%', hhr: 68, featured: true },
+  { id: 30, name: 'VIP Holdem', type: 'holdem', blinds: '500/1,000', smallBlind: 500, bigBlind: 1000, buyIn: '10K–100K', players: 3, max: 6, avgPot: '12,500', flop: '42%', hhr: 72, featured: true },
+  { id: 31, name: 'VIP Omaha', type: 'omaha', blinds: '500/1,000', smallBlind: 500, bigBlind: 1000, buyIn: '10K–100K', players: 2, max: 6, avgPot: '18,200', flop: '58%', hhr: 68, featured: true },
 ]
 
 const TOURNAMENTS: Tournament[] = [
@@ -50,11 +50,11 @@ const VIP_TOURNAMENT: Tournament = {
 }
 
 const PRIZE_DISTRIBUTION = [
-  { place: '1st', pct: 50, color: '#fbbf24' },
-  { place: '2nd', pct: 30, color: '#d0d0d0' },
-  { place: '3rd', pct: 12, color: '#cd7f32' },
-  { place: '4th', pct: 5, color: '#888' },
-  { place: '5th', pct: 3, color: '#666' },
+  { place: '1st', pct: 50, color: '#E8DCC8' },
+  { place: '2nd', pct: 30, color: '#b0a890' },
+  { place: '3rd', pct: 12, color: '#8a7e68' },
+  { place: '4th', pct: 5, color: '#555' },
+  { place: '5th', pct: 3, color: '#444' },
 ]
 
 const BLIND_STRUCTURE = [
@@ -76,25 +76,26 @@ type Tab = 'home' | 'tournament' | 'holdem' | 'omaha' | 'vip'
 //  COMPONENT
 // ═══════════════════════════════════════════════════════════
 
-interface LobbyProps { onJoinTable: (tableId: number) => void }
+interface LobbyProps { onJoinTable: (tableId: number, bigBlind: number, tableName: string) => void }
 
 export default function Lobby({ onJoinTable }: LobbyProps) {
   const { address, isConnected } = useAccount()
   const { username, openConnect, openWallet } = useInterwovenKit()
   const { walletBalance, gameBalance, isLoading: balLoading, refetch: refetchBal } = useWalletBalance()
   const [tab, setTab] = useState<Tab>('home')
-  const [selectedTable, setSelectedTable] = useState<Table | null>(HOLDEM_TABLES[0])
+  const [selectedTable, setSelectedTable] = useState<Table | null>(TEST_TABLES[0])
   const [selectedTournament, setSelectedTournament] = useState<Tournament | null>(null)
   const [cashierOpen, setCashierOpen] = useState(false)
 
   const truncAddr = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
-  const allTables = [...HOLDEM_TABLES, ...OMAHA_TABLES]
-  const totalPlayers = [...allTables, ...VIP_TABLES].reduce((a, t) => a + t.players, 0) + TOURNAMENTS.reduce((a, t) => a + t.registered, 0)
+  const allTables = [...TEST_TABLES, ...HOLDEM_TABLES, ...OMAHA_TABLES]
+  // Real count: only from on-chain data (mock tables show 0 until we have real data)
+  const totalPlayers = [...allTables, ...VIP_TABLES].reduce((a, t) => a + t.players, 0)
 
   const getTabTables = (): Table[] => {
-    if (tab === 'home') return allTables
-    if (tab === 'holdem') return HOLDEM_TABLES
+    if (tab === 'home') return [...TEST_TABLES, ...allTables.filter(t => !TEST_TABLES.includes(t))]
+    if (tab === 'holdem') return [...TEST_TABLES, ...HOLDEM_TABLES]
     if (tab === 'omaha') return OMAHA_TABLES
     if (tab === 'vip') return VIP_TABLES
     return []
@@ -117,7 +118,7 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
 
   const dots = (count: number, max: number) => {
     const d = []
-    for (let i = 0; i < max; i++) d.push(<span key={i} style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: i < count ? '#d0d0d0' : '#2a2a2a', marginRight: '2px' }} />)
+    for (let i = 0; i < max; i++) d.push(<span key={i} style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: i < count ? '#7ECFB3' : '#1C1C1C', marginRight: '2px' }} />)
     return <span style={{ display: 'inline-flex', alignItems: 'center' }}>{d}</span>
   }
 
@@ -128,31 +129,34 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
       {/* ═══ TOP BAR ═══ */}
       <div style={s.topBar}>
         <div style={s.topLeft}>
+          <span style={s.logoMark}>◆</span>
           <span style={s.logoB}>INI</span><span style={s.logoL}>Poker</span>
         </div>
-        <span style={s.online}>{totalPlayers} Players Online</span>
+        <span style={s.online}>{totalPlayers > 0 ? `${totalPlayers} online` : 'Testnet'}</span>
         <div style={s.topRight}>
           {isConnected && (
             <>
               <span style={s.gameBalLabel}>
-                Wallet: <b style={{color:'#fff'}}>{balLoading ? '…' : `${walletBalance} INIT`}</b>
-                {' · '}
-                Game: <b style={{color:'#4ade80'}}>{balLoading ? '…' : `${gameBalance} INIT`}</b>
+                <span style={s.balDot} />
+                {balLoading ? '…' : `${walletBalance}`}
+                <span style={{color:'#555'}}>|</span>
+                <span style={{color:'#7ECFB3'}}>{balLoading ? '…' : gameBalance}</span>
+                <span style={{color:'#555',fontSize:'10px'}}>INIT</span>
               </span>
               <button onClick={() => setCashierOpen(true)} style={s.cashierBtn}>Cashier</button>
             </>
           )}
           {isConnected ? (
-            <button onClick={openWallet} style={s.walletBtn}><span style={s.wDot} />{username ?? truncAddr(address!)}</button>
+            <button onClick={openWallet} style={s.walletBtn}>{username ?? truncAddr(address!)}</button>
           ) : (
-            <><button onClick={openConnect} style={s.loginBtn}>Login</button><button onClick={openConnect} style={s.signupBtn}>Sign-up</button></>
+            <button onClick={openConnect} style={s.loginBtn}>Connect Wallet</button>
           )}
         </div>
       </div>
 
       {/* ═══ TAB BAR ═══ */}
       <div style={s.tabBar}>
-        {([['home','Home'],['tournament','Tournament'],['holdem',"Hold'em"],['omaha','Omaha'],['vip','VIP Area']] as [Tab,string][]).map(([k,label]) => (
+        {([['home','Home'],['tournament','Tournament'],['holdem',"Hold'em"],['omaha','Omaha'],['vip','VIP']] as [Tab,string][]).map(([k,label]) => (
           <button key={k} onClick={() => { setTab(k); setSelectedTournament(null); setSelectedTable(getTabTables()[0] ?? null) }} style={tab === k ? s.tabAct : s.tabBtn}>{label}</button>
         ))}
       </div>
@@ -166,7 +170,10 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
           {/* Tables */}
           {getTabTables().length > 0 && (
             <>
-              <div style={s.secHead}><span style={s.secTitle}>{tab === 'vip' ? 'VIP Tables' : 'Cash Games'}</span></div>
+              <div style={s.secHead}>
+                <span style={s.secTitle}>{tab === 'vip' ? 'VIP Tables' : 'Cash Games'}</span>
+                {tab === 'home' && <span style={s.testBadge}>Test tables included</span>}
+              </div>
               <div style={s.colHdr}>
                 <span style={{...s.hc, flex:2}}>Table</span>
                 <span style={s.hc}>Blinds</span>
@@ -178,7 +185,12 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
               </div>
               {getTabTables().map(t => (
                 <div key={t.id} onClick={() => { setSelectedTable(t); setSelectedTournament(null) }} style={{...s.row, ...(selectedTable?.id===t.id?s.rowSel:{}), ...(t.featured?s.rowFeat:{})}}>
-                  <span style={{...s.c, flex:2}}>{t.featured && <span style={s.star}>★ </span>}<span style={t.featured?s.nameF:s.nameN}>{t.name}</span><span style={s.typeTag}>{t.type === 'holdem' ? 'H' : 'O'}</span></span>
+                  <span style={{...s.c, flex:2}}>
+                    {t.featured && <span style={s.star}>◆ </span>}
+                    <span style={t.featured?s.nameF:s.nameN}>{t.name}</span>
+                    <span style={s.typeTag}>{t.type === 'holdem' ? 'H' : 'O'}</span>
+                    {t.bigBlind <= 0.2 && <span style={s.microTag}>TEST</span>}
+                  </span>
                   <span style={s.c}><b>{t.blinds}</b></span>
                   <span style={s.c}>{t.buyIn} INIT</span>
                   <span style={{...s.c, flex:1.3}}>{dots(t.players, t.max)}</span>
@@ -205,13 +217,13 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
               </div>
               {getTabTournaments().map(t => (
                 <div key={t.id} onClick={() => { setSelectedTournament(t); setSelectedTable(null) }} style={{...s.row, ...(selectedTournament?.id===t.id?s.rowSel:{}), ...(t.vip?s.rowFeat:{})}}>
-                  <span style={{...s.c, flex:2}}>{t.vip && <span style={s.star}>★ </span>}<span style={t.vip?s.nameF:s.nameN}>{t.name}</span></span>
+                  <span style={{...s.c, flex:2}}>{t.vip && <span style={s.star}>◆ </span>}<span style={t.vip?s.nameF:s.nameN}>{t.name}</span></span>
                   <span style={s.c}><b>{t.buyIn} INIT</b></span>
-                  <span style={{...s.c, color:'#4ade80', fontWeight:700}}>{computePrize(t).toFixed(1)} INIT</span>
+                  <span style={{...s.c, color:'#7ECFB3', fontWeight:700}}>{computePrize(t).toFixed(1)} INIT</span>
                   <span style={s.c}>{t.registered}/{t.minPlayers}</span>
                   <span style={s.c}>{t.startingStack.toLocaleString()}</span>
                   <span style={s.c}>{t.blindLevel}</span>
-                  <span style={{...s.c, color:'#fbbf24'}}>{t.nextStart}</span>
+                  <span style={{...s.c, color:'#E8DCC8'}}>{t.nextStart}</span>
                 </div>
               ))}
             </>
@@ -232,11 +244,11 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
 
       {/* ═══ BOTTOM ═══ */}
       <div style={s.bottom}>
-        <span>INIPoker v1.0.0</span>
-        <span>● RNG: Band VRF</span>
-        <span>● Commit-Reveal</span>
-        <span>● Autosign</span>
-        <span>Initia Testnet</span>
+        <span style={{color:'#555'}}>INIPoker v1.0</span>
+        <span>Band VRF</span>
+        <span>Commit-Reveal</span>
+        <span>Autosign</span>
+        <span style={{marginLeft:'auto',color:'#555'}}>Initia Testnet</span>
       </div>
 
       {/* ═══ CASHIER MODAL ═══ */}
@@ -256,21 +268,41 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
 //  TABLE PREVIEW PANEL
 // ═══════════════════════════════════════════════════════════
 
-function TablePanel({ t, onJoin, isConnected, openConnect, dots }: { t: Table; onJoin: (id:number)=>void; isConnected: boolean; openConnect: ()=>void; dots: (c:number,m:number)=>JSX.Element }) {
+function TablePanel({ t, onJoin, isConnected, openConnect, dots }: { t: Table; onJoin: (id:number,bb:number,name:string)=>void; isConnected: boolean; openConnect: ()=>void; dots: (c:number,m:number)=>JSX.Element }) {
   return (
     <>
-      <div style={s.prevHdr}>{t.blinds} INIT · {t.type === 'holdem' ? "Hold'em" : 'Omaha'}</div>
+      <div style={s.prevHdr}>
+        <span style={{fontSize:'11px',color:'#555',textTransform:'uppercase',letterSpacing:'1px'}}>{t.type === 'holdem' ? "Hold'em" : 'Omaha'}</span>
+        <span style={{fontSize:'18px',fontWeight:600,color:'#fff'}}>{t.name}</span>
+        <span style={{fontSize:'12px',color:'#8A8A8A'}}>{t.blinds} INIT blinds</span>
+      </div>
       <div style={s.miniTable}>
-        <div style={s.felt}><span style={s.feltText}>Buy-in: {t.buyIn} INIT<br/>Blinds: {t.blinds} INIT</span></div>
+        <div style={s.felt}>
+          <span style={s.feltText}>
+            <span style={{color:'#7ECFB3',fontWeight:600}}>{t.blinds}</span>
+            <br/>{t.buyIn} INIT
+          </span>
+        </div>
         {[{top:'8%',left:'50%'},{top:'35%',left:'88%'},{top:'78%',left:'80%'},{top:'78%',left:'20%'},{top:'35%',left:'12%'},{top:'55%',left:'50%'}].slice(0,t.max).map((pos,i) => (
           <div key={i} style={{position:'absolute',...pos,transform:'translate(-50%,-50%)'}}>
-            {i<t.players ? <div style={s.seatFull}><div style={s.avatar}/><span style={s.sChips}>${(Math.random()*parseInt(t.buyIn.replace(/,/g,''))*0.6+100).toFixed(0)}</span></div> : <div style={s.seatEmpty}/>}
+            {i<t.players ? <div style={s.seatFull}><div style={s.avatar}/><span style={s.sChips}>{(Math.random()*parseInt((t.buyIn).replace(/[^0-9]/g,''))*0.6+10).toFixed(0)}</span></div> : <div style={s.seatEmpty}/>}
           </div>
         ))}
       </div>
+
+      {/* Info */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px',margin:'8px 0'}}>
+        <div style={s.infoBox}><span style={s.infoLbl}>Buy-in range</span><span style={s.infoVal}>{t.buyIn} INIT</span></div>
+        <div style={s.infoBox}><span style={s.infoLbl}>Players</span><span style={s.infoVal}>{t.players}/{t.max}</span></div>
+      </div>
+
       <div style={s.prevBtns}>
-        <button onClick={() => isConnected ? onJoin(t.id) : openConnect()} style={s.openBtn}>Open</button>
-        <button onClick={() => isConnected ? onJoin(t.id) : openConnect()} style={t.players<t.max ? s.joinBtn : s.fullBtn}>{t.players<t.max?'Join':'Full'}</button>
+        <button onClick={() => isConnected ? onJoin(t.id, t.bigBlind, t.name) : openConnect()} style={s.openBtn}>Observe</button>
+        <button onClick={() => isConnected ? onJoin(t.id, t.bigBlind, t.name) : openConnect()} style={t.players<t.max ? s.joinBtn : s.fullBtn}>{t.players<t.max?'Play':'Full'}</button>
+      </div>
+
+      <div style={{fontSize:'10px',color:'#3a3a3a',marginTop:'8px',lineHeight:1.6}}>
+        Buy-in: {t.bigBlind * 10}–{t.bigBlind * 100} INIT ({10}–{100} big blinds)
       </div>
     </>
   )
@@ -286,64 +318,56 @@ function TournamentPanel({ t, computePrize, isConnected, openConnect }: { t: Tou
 
   return (
     <div style={{display:'flex', flexDirection:'column', height:'100%', gap:'10px'}}>
-      {/* Header */}
       <div style={{textAlign:'center',padding:'8px 0'}}>
-        <div style={{fontSize:'15px',fontWeight:700,color:'#fff'}}>{t.name}</div>
-        <div style={{fontSize:'11px',color:'#888',marginTop:'2px'}}>{t.type === 'holdem' ? "No-Limit Hold'em" : 'Pot-Limit Omaha'}</div>
+        <div style={{fontSize:'15px',fontWeight:600,color:'#fff'}}>{t.name}</div>
+        <div style={{fontSize:'11px',color:'#555',marginTop:'2px'}}>{t.type === 'holdem' ? "No-Limit Hold'em" : 'Pot-Limit Omaha'}</div>
       </div>
 
-      {/* Info grid */}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px',fontSize:'11px'}}>
         <div style={s.infoBox}><span style={s.infoLbl}>Buy-in</span><span style={s.infoVal}>{t.buyIn} INIT</span></div>
-        <div style={s.infoBox}><span style={s.infoLbl}>Prize Pool</span><span style={{...s.infoVal,color:'#4ade80'}}>{pool.toFixed(1)} INIT</span></div>
+        <div style={s.infoBox}><span style={s.infoLbl}>Prize Pool</span><span style={{...s.infoVal,color:'#7ECFB3'}}>{pool.toFixed(1)} INIT</span></div>
         <div style={s.infoBox}><span style={s.infoLbl}>Starting Stack</span><span style={s.infoVal}>{t.startingStack.toLocaleString()}</span></div>
         <div style={s.infoBox}><span style={s.infoLbl}>Blind Levels</span><span style={s.infoVal}>{t.blindLevel}</span></div>
         <div style={s.infoBox}><span style={s.infoLbl}>Registered</span><span style={s.infoVal}>{t.registered} / {t.minPlayers}</span></div>
-        <div style={s.infoBox}><span style={s.infoLbl}>Next Start</span><span style={{...s.infoVal,color:'#fbbf24'}}>{t.nextStart}</span></div>
+        <div style={s.infoBox}><span style={s.infoLbl}>Next Start</span><span style={{...s.infoVal,color:'#E8DCC8'}}>{t.nextStart}</span></div>
       </div>
 
-      {/* Rules */}
-      <div style={{fontSize:'10px',color:'#666',lineHeight:1.6,padding:'6px 0',borderTop:'1px solid #222',borderBottom:'1px solid #222'}}>
-        <b style={{color:'#999'}}>Rules:</b> Tournament starts every 2 hours when {t.minPlayers} players registered.
-        Starting stack: {t.startingStack.toLocaleString()} INIT ({t.startingStack / 100} big blinds at Level 1).
-        Blinds increase every {t.blindLevel}. Late registration closes at Level 3.
-        Top 5 places paid.
+      <div style={{fontSize:'10px',color:'#444',lineHeight:1.6,padding:'6px 0',borderTop:'1px solid #161616',borderBottom:'1px solid #161616'}}>
+        <b style={{color:'#666'}}>Rules:</b> Tournament starts every 2 hours when {t.minPlayers} players registered.
+        Starting stack: {t.startingStack.toLocaleString()} INIT. Top 5 places paid.
       </div>
 
-      {/* Prize Distribution */}
       <div>
-        <div style={{fontSize:'11px',fontWeight:700,color:'#ccc',marginBottom:'6px'}}>Prize Distribution</div>
+        <div style={{fontSize:'11px',fontWeight:600,color:'#888',marginBottom:'6px'}}>Prize Distribution</div>
         {PRIZE_DISTRIBUTION.map(p => (
-          <div key={p.place} style={{display:'flex',alignItems:'center',padding:'4px 0',fontSize:'11px',borderBottom:'1px solid #1a1a1a'}}>
+          <div key={p.place} style={{display:'flex',alignItems:'center',padding:'4px 0',fontSize:'11px',borderBottom:'1px solid #111'}}>
             <span style={{width:'36px',fontWeight:700,color:p.color}}>{p.place}</span>
-            <div style={{flex:1,height:'14px',background:'#1a1a1a',borderRadius:'3px',overflow:'hidden'}}>
-              <div style={{width:`${p.pct}%`,height:'100%',background:p.color,opacity:0.4,borderRadius:'3px'}} />
+            <div style={{flex:1,height:'12px',background:'#111',borderRadius:'3px',overflow:'hidden'}}>
+              <div style={{width:`${p.pct}%`,height:'100%',background:p.color,opacity:0.3,borderRadius:'3px'}} />
             </div>
-            <span style={{width:'36px',textAlign:'right' as const,fontWeight:700,color:p.color}}>{p.pct}%</span>
-            <span style={{width:'70px',textAlign:'right' as const,color:'#4ade80',fontWeight:600}}>{(pool * p.pct / 100).toFixed(1)}</span>
+            <span style={{width:'36px',textAlign:'right' as const,fontWeight:600,color:p.color}}>{p.pct}%</span>
+            <span style={{width:'70px',textAlign:'right' as const,color:'#7ECFB3',fontWeight:600}}>{(pool * p.pct / 100).toFixed(1)}</span>
           </div>
         ))}
       </div>
 
-      {/* Blind Structure (collapsed) */}
-      <details style={{fontSize:'10px',color:'#888'}}>
-        <summary style={{cursor:'pointer',fontWeight:700,color:'#999',padding:'4px 0'}}>Blind Structure</summary>
+      <details style={{fontSize:'10px',color:'#555'}}>
+        <summary style={{cursor:'pointer',fontWeight:600,color:'#666',padding:'4px 0'}}>Blind Structure</summary>
         <div style={{marginTop:'4px'}}>
           {BLIND_STRUCTURE.map(b => (
-            <div key={b.level} style={{display:'flex',gap:'8px',padding:'2px 0',borderBottom:'1px solid #141414'}}>
-              <span style={{width:'20px',color:'#555'}}>L{b.level}</span>
+            <div key={b.level} style={{display:'flex',gap:'8px',padding:'2px 0',borderBottom:'1px solid #0F0F0F'}}>
+              <span style={{width:'20px',color:'#444'}}>L{b.level}</span>
               <span style={{flex:1}}>{b.blinds}</span>
               <span style={{width:'40px'}}>{b.ante}</span>
-              <span style={{width:'50px',color:'#555'}}>{b.dur}</span>
+              <span style={{width:'50px',color:'#444'}}>{b.dur}</span>
             </div>
           ))}
         </div>
       </details>
 
-      {/* Register button */}
       <div style={{marginTop:'auto'}}>
         {registered ? (
-          <button onClick={() => setRegistered(false)} style={{...s.regBtn,background:'#333',color:'#888'}}>
+          <button onClick={() => setRegistered(false)} style={{...s.regBtn,background:'#161616',color:'#555'}}>
             ✓ Registered · Unregister
           </button>
         ) : (
@@ -357,70 +381,72 @@ function TournamentPanel({ t, computePrize, isConnected, openConnect }: { t: Tou
 }
 
 // ═══════════════════════════════════════════════════════════
-//  STYLES
+//  STYLES — Initia-inspired minimal dark
 // ═══════════════════════════════════════════════════════════
 
 const s: Record<string, React.CSSProperties> = {
-  root: { minHeight:'100vh', background:'#0d0d0d', color:'#c0c0c0', fontFamily:'"JetBrains Mono","Fira Code",monospace', display:'flex', flexDirection:'column', fontSize:'12px' },
+  root: { minHeight:'100vh', background:'#000', color:'#b0b0b0', fontFamily:'"DM Sans",sans-serif', display:'flex', flexDirection:'column', fontSize:'12px' },
 
-  topBar: { display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 16px', background:'#111', borderBottom:'1px solid #222' },
-  topLeft: { display:'flex', alignItems:'baseline' },
-  logoB: { fontSize:'22px', fontWeight:800, color:'#fff', letterSpacing:'-1px' },
-  logoL: { fontSize:'22px', fontWeight:300, color:'#777', letterSpacing:'-1px' },
-  online: { fontSize:'11px', color:'#666' },
-  topRight: { display:'flex', gap:'8px' },
-  cashierBtn: { background:'#2ecc71', color:'#000', border:'none', borderRadius:'4px', padding:'6px 16px', fontSize:'11px', fontWeight:700, cursor:'pointer', fontFamily:'inherit' },
-  gameBalLabel: { fontSize:'11px', color:'#888', display:'flex', alignItems:'center', gap:'4px' },
-  walletBtn: { background:'#1a1a1a', color:'#ccc', border:'1px solid #333', borderRadius:'4px', padding:'6px 14px', fontSize:'11px', fontWeight:600, cursor:'pointer', fontFamily:'inherit', display:'flex', alignItems:'center', gap:'6px' },
-  wDot: { width:'6px', height:'6px', borderRadius:'50%', background:'#4ade80', display:'inline-block' },
-  loginBtn: { background:'#222', color:'#ccc', border:'1px solid #333', borderRadius:'4px', padding:'7px 20px', fontSize:'12px', fontWeight:600, cursor:'pointer', fontFamily:'inherit' },
-  signupBtn: { background:'#c0392b', color:'#fff', border:'none', borderRadius:'4px', padding:'7px 20px', fontSize:'12px', fontWeight:700, cursor:'pointer', fontFamily:'inherit' },
+  topBar: { display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 20px', background:'#000', borderBottom:'1px solid #161616' },
+  topLeft: { display:'flex', alignItems:'center', gap:'6px' },
+  logoMark: { color:'#E8DCC8', fontSize:'14px' },
+  logoB: { fontSize:'20px', fontWeight:700, color:'#fff', letterSpacing:'-0.5px' },
+  logoL: { fontSize:'20px', fontWeight:300, color:'#555', letterSpacing:'-0.5px' },
+  online: { fontSize:'11px', color:'#3a3a3a' },
+  topRight: { display:'flex', gap:'8px', alignItems:'center' },
+  cashierBtn: { background:'#161616', color:'#7ECFB3', border:'1px solid #1C1C1C', borderRadius:'6px', padding:'7px 16px', fontSize:'11px', fontWeight:600, cursor:'pointer', fontFamily:'inherit' },
+  gameBalLabel: { fontSize:'11px', color:'#888', display:'flex', alignItems:'center', gap:'6px', fontFamily:'"DM Mono",monospace' },
+  balDot: { width:'5px', height:'5px', borderRadius:'50%', background:'#7ECFB3', display:'inline-block' },
+  walletBtn: { background:'#111', color:'#ccc', border:'1px solid #1C1C1C', borderRadius:'6px', padding:'7px 14px', fontSize:'11px', fontWeight:500, cursor:'pointer', fontFamily:'"DM Mono",monospace' },
+  loginBtn: { background:'#E8DCC8', color:'#000', border:'none', borderRadius:'6px', padding:'8px 20px', fontSize:'12px', fontWeight:600, cursor:'pointer', fontFamily:'inherit' },
 
-  tabBar: { display:'flex', padding:'0 16px', background:'#111', borderBottom:'1px solid #222' },
-  tabBtn: { background:'transparent', color:'#666', border:'none', borderBottom:'2px solid transparent', padding:'10px 18px', fontSize:'12px', fontWeight:600, cursor:'pointer', fontFamily:'inherit' },
-  tabAct: { background:'#1a1a1a', color:'#fff', border:'none', borderBottom:'2px solid #e0e0e0', padding:'10px 18px', fontSize:'12px', fontWeight:700, cursor:'pointer', fontFamily:'inherit' },
+  tabBar: { display:'flex', padding:'0 20px', background:'#000', borderBottom:'1px solid #161616' },
+  tabBtn: { background:'transparent', color:'#444', border:'none', borderBottom:'2px solid transparent', padding:'10px 18px', fontSize:'12px', fontWeight:500, cursor:'pointer', fontFamily:'inherit', transition:'color 0.2s' },
+  tabAct: { background:'transparent', color:'#fff', border:'none', borderBottom:'2px solid #E8DCC8', padding:'10px 18px', fontSize:'12px', fontWeight:600, cursor:'pointer', fontFamily:'inherit' },
 
   main: { display:'flex', flex:1, overflow:'hidden' },
-  left: { flex:1, overflowY:'auto' as const, borderRight:'1px solid #1a1a1a' },
-  right: { width:'300px', background:'#111', padding:'12px', flexShrink:0, overflowY:'auto' as const, display:'flex', flexDirection:'column' },
+  left: { flex:1, overflowY:'auto' as const, borderRight:'1px solid #111' },
+  right: { width:'300px', background:'#0A0A0A', padding:'14px', flexShrink:0, overflowY:'auto' as const, display:'flex', flexDirection:'column' },
 
-  secHead: { display:'flex', alignItems:'baseline', gap:'12px', padding:'8px 12px', background:'#141414', borderBottom:'1px solid #1a1a1a' },
-  secTitle: { fontSize:'12px', fontWeight:700, color:'#ddd' },
-  secSub: { fontSize:'10px', color:'#555' },
+  secHead: { display:'flex', alignItems:'baseline', gap:'12px', padding:'10px 14px', borderBottom:'1px solid #111' },
+  secTitle: { fontSize:'11px', fontWeight:600, color:'#888', letterSpacing:'0.5px', textTransform:'uppercase' as const },
+  secSub: { fontSize:'10px', color:'#3a3a3a' },
+  testBadge: { fontSize:'9px', color:'#7ECFB3', background:'rgba(126,207,179,0.08)', padding:'2px 8px', borderRadius:'4px', fontWeight:600 },
 
-  colHdr: { display:'flex', padding:'5px 12px', background:'#141414', borderBottom:'1px solid #1a1a1a' },
-  hc: { flex:1, fontSize:'9px', color:'#555', fontWeight:700, letterSpacing:'0.3px', textTransform:'uppercase' as const },
+  colHdr: { display:'flex', padding:'5px 14px', borderBottom:'1px solid #111' },
+  hc: { flex:1, fontSize:'9px', color:'#3a3a3a', fontWeight:600, letterSpacing:'0.3px', textTransform:'uppercase' as const },
 
-  row: { display:'flex', padding:'6px 12px', borderBottom:'1px solid #1a1a1a', cursor:'pointer' },
-  rowSel: { background:'#1a1a1a' },
-  rowFeat: { background:'rgba(251,191,36,0.03)', borderLeft:'2px solid #fbbf24' },
-  c: { flex:1, display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', color:'#bbb' },
-  nameN: { color:'#ddd', fontWeight:500 },
-  nameF: { color:'#fbbf24', fontWeight:700 },
-  star: { color:'#fbbf24', fontSize:'10px' },
-  typeTag: { fontSize:'8px', color:'#555', background:'#1a1a1a', borderRadius:'2px', padding:'1px 4px', marginLeft:'4px' },
+  row: { display:'flex', padding:'7px 14px', borderBottom:'1px solid #0F0F0F', cursor:'pointer', transition:'background 0.15s' },
+  rowSel: { background:'#111' },
+  rowFeat: { background:'rgba(232,220,200,0.02)', borderLeft:'2px solid #E8DCC8' },
+  c: { flex:1, display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', color:'#888' },
+  nameN: { color:'#ccc', fontWeight:500 },
+  nameF: { color:'#E8DCC8', fontWeight:600 },
+  star: { color:'#E8DCC8', fontSize:'10px' },
+  typeTag: { fontSize:'8px', color:'#444', background:'#111', borderRadius:'2px', padding:'1px 4px', marginLeft:'4px' },
+  microTag: { fontSize:'8px', color:'#7ECFB3', background:'rgba(126,207,179,0.1)', borderRadius:'2px', padding:'1px 5px', marginLeft:'4px', fontWeight:700 },
 
   // Table preview
-  prevHdr: { textAlign:'center' as const, fontSize:'14px', fontWeight:700, color:'#fff', padding:'8px 0' },
+  prevHdr: { display:'flex', flexDirection:'column' as const, alignItems:'center', gap:'2px', padding:'8px 0' },
   miniTable: { position:'relative' as const, height:'190px', margin:'4px 0' },
-  felt: { position:'absolute' as const, top:'18%', left:'8%', width:'84%', height:'64%', borderRadius:'50%', background:'#162016', border:'2px solid #2a4a2a', display:'flex', alignItems:'center', justifyContent:'center' },
-  feltText: { fontSize:'10px', color:'#4a6a4a', textAlign:'center' as const, lineHeight:1.6 },
+  felt: { position:'absolute' as const, top:'18%', left:'8%', width:'84%', height:'64%', borderRadius:'50%', background:'#0F0F0F', border:'1px solid #1C1C1C', display:'flex', alignItems:'center', justifyContent:'center' },
+  feltText: { fontSize:'10px', color:'#555', textAlign:'center' as const, lineHeight:1.6 },
   seatFull: { display:'flex', flexDirection:'column' as const, alignItems:'center', gap:'1px' },
-  avatar: { width:'26px', height:'26px', borderRadius:'50%', background:'#222', border:'2px solid #333' },
-  sChips: { fontSize:'9px', color:'#4ade80', fontWeight:700, background:'rgba(0,0,0,0.7)', padding:'1px 5px', borderRadius:'3px' },
-  seatEmpty: { width:'26px', height:'26px', borderRadius:'50%', border:'1px dashed #333' },
+  avatar: { width:'26px', height:'26px', borderRadius:'50%', background:'#161616', border:'1px solid #2a2a2a' },
+  sChips: { fontSize:'9px', color:'#7ECFB3', fontWeight:600, background:'rgba(0,0,0,0.8)', padding:'1px 5px', borderRadius:'3px' },
+  seatEmpty: { width:'26px', height:'26px', borderRadius:'50%', border:'1px dashed #222' },
   prevBtns: { display:'flex', gap:'8px', marginTop:'8px' },
-  openBtn: { flex:1, background:'#222', color:'#ccc', border:'1px solid #333', borderRadius:'4px', padding:'8px', fontSize:'12px', fontWeight:600, cursor:'pointer', fontFamily:'inherit' },
-  joinBtn: { flex:1, background:'#c0392b', color:'#fff', border:'none', borderRadius:'4px', padding:'8px', fontSize:'12px', fontWeight:700, cursor:'pointer', fontFamily:'inherit' },
-  fullBtn: { flex:1, background:'#222', color:'#555', border:'1px solid #1a1a1a', borderRadius:'4px', padding:'8px', fontSize:'12px', cursor:'not-allowed', fontFamily:'inherit' },
+  openBtn: { flex:1, background:'#111', color:'#888', border:'1px solid #1C1C1C', borderRadius:'6px', padding:'9px', fontSize:'12px', fontWeight:500, cursor:'pointer', fontFamily:'inherit' },
+  joinBtn: { flex:1, background:'#E8DCC8', color:'#000', border:'none', borderRadius:'6px', padding:'9px', fontSize:'12px', fontWeight:600, cursor:'pointer', fontFamily:'inherit' },
+  fullBtn: { flex:1, background:'#111', color:'#3a3a3a', border:'1px solid #111', borderRadius:'6px', padding:'9px', fontSize:'12px', cursor:'not-allowed', fontFamily:'inherit' },
 
   // Tournament panel
-  infoBox: { background:'#141414', borderRadius:'4px', padding:'8px', display:'flex', flexDirection:'column' as const, gap:'2px' },
-  infoLbl: { fontSize:'9px', color:'#555', fontWeight:600, textTransform:'uppercase' as const },
-  infoVal: { fontSize:'13px', fontWeight:700, color:'#ddd' },
-  regBtn: { width:'100%', background:'#c0392b', color:'#fff', border:'none', borderRadius:'4px', padding:'10px', fontSize:'13px', fontWeight:700, cursor:'pointer', fontFamily:'inherit' },
+  infoBox: { background:'#0F0F0F', borderRadius:'6px', padding:'8px', display:'flex', flexDirection:'column' as const, gap:'2px' },
+  infoLbl: { fontSize:'9px', color:'#3a3a3a', fontWeight:600, textTransform:'uppercase' as const },
+  infoVal: { fontSize:'13px', fontWeight:600, color:'#ccc' },
+  regBtn: { width:'100%', background:'#E8DCC8', color:'#000', border:'none', borderRadius:'6px', padding:'10px', fontSize:'13px', fontWeight:600, cursor:'pointer', fontFamily:'inherit' },
 
-  emptyPanel: { color:'#444', textAlign:'center' as const, marginTop:'40px', fontSize:'13px' },
+  emptyPanel: { color:'#2a2a2a', textAlign:'center' as const, marginTop:'40px', fontSize:'13px' },
 
-  bottom: { display:'flex', alignItems:'center', gap:'20px', padding:'6px 16px', background:'#111', borderTop:'1px solid #1a1a1a', fontSize:'10px', color:'#444' },
+  bottom: { display:'flex', alignItems:'center', gap:'20px', padding:'8px 20px', borderTop:'1px solid #111', fontSize:'10px', color:'#2a2a2a' },
 }

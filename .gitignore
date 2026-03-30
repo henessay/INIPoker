@@ -1,5 +1,24 @@
+# Foundry
+/out/
+/cache/
+/lib/
+
+# Environment (contains private keys)
 .env
-cache/
-out/
-broadcast/
+
+# Node
 node_modules/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
