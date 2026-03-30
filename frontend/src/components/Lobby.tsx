@@ -21,22 +21,22 @@ const TEST_TABLES: Table[] = [
 ]
 
 const HOLDEM_TABLES: Table[] = [
-  { id: 10, name: 'Emerald 01', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 4, max: 6, avgPot: '136', flop: '54%', hhr: 112 },
-  { id: 11, name: 'Emerald 02', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 3, max: 6, avgPot: '98', flop: '50%', hhr: 108 },
-  { id: 12, name: 'Ruby 01', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 5, max: 6, avgPot: '420', flop: '48%', hhr: 103, featured: true },
-  { id: 13, name: 'Ruby 02', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 4, max: 6, avgPot: '380', flop: '46%', hhr: 99 },
-  { id: 14, name: 'Onyx 01', type: 'holdem', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 3, max: 6, avgPot: '1,200', flop: '42%', hhr: 90 },
+  { id: 10, name: 'Emerald 01', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 0, max: 6, avgPot: '136', flop: '54%', hhr: 112 },
+  { id: 11, name: 'Emerald 02', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 0, max: 6, avgPot: '98', flop: '50%', hhr: 108 },
+  { id: 12, name: 'Ruby 01', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 0, max: 6, avgPot: '420', flop: '48%', hhr: 103, featured: true },
+  { id: 13, name: 'Ruby 02', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 0, max: 6, avgPot: '380', flop: '46%', hhr: 99 },
+  { id: 14, name: 'Onyx 01', type: 'holdem', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 0, max: 6, avgPot: '1,200', flop: '42%', hhr: 90 },
 ]
 
 const OMAHA_TABLES: Table[] = [
-  { id: 20, name: 'Omaha Emerald', type: 'omaha', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 3, max: 6, avgPot: '190', flop: '58%', hhr: 95 },
-  { id: 21, name: 'Omaha Ruby', type: 'omaha', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 5, max: 6, avgPot: '580', flop: '62%', hhr: 88, featured: true },
-  { id: 22, name: 'Omaha Onyx', type: 'omaha', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 2, max: 6, avgPot: '2,800', flop: '55%', hhr: 82 },
+  { id: 20, name: 'Omaha Emerald', type: 'omaha', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 0, max: 6, avgPot: '190', flop: '58%', hhr: 95 },
+  { id: 21, name: 'Omaha Ruby', type: 'omaha', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 0, max: 6, avgPot: '580', flop: '62%', hhr: 88, featured: true },
+  { id: 22, name: 'Omaha Onyx', type: 'omaha', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 0, max: 6, avgPot: '2,800', flop: '55%', hhr: 82 },
 ]
 
 const VIP_TABLES: Table[] = [
-  { id: 30, name: 'VIP Holdem', type: 'holdem', blinds: '500/1,000', smallBlind: 500, bigBlind: 1000, buyIn: '10K–100K', players: 3, max: 6, avgPot: '12,500', flop: '42%', hhr: 72, featured: true },
-  { id: 31, name: 'VIP Omaha', type: 'omaha', blinds: '500/1,000', smallBlind: 500, bigBlind: 1000, buyIn: '10K–100K', players: 2, max: 6, avgPot: '18,200', flop: '58%', hhr: 68, featured: true },
+  { id: 30, name: 'VIP Holdem', type: 'holdem', blinds: '500/1,000', smallBlind: 500, bigBlind: 1000, buyIn: '10K–100K', players: 0, max: 6, avgPot: '12,500', flop: '42%', hhr: 72, featured: true },
+  { id: 31, name: 'VIP Omaha', type: 'omaha', blinds: '500/1,000', smallBlind: 500, bigBlind: 1000, buyIn: '10K–100K', players: 0, max: 6, avgPot: '18,200', flop: '58%', hhr: 68, featured: true },
 ]
 
 const TOURNAMENTS: Tournament[] = [

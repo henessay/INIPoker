@@ -15,7 +15,7 @@ import { COSMOS_CHAIN_ID } from './config/chain'
 
 // Initia Testnet EVM — shows "Initia Testnet" not "Ethereum"
 const initiaTestnet = {
-  id: 57073,
+  id: 27364052648649445,
   name: 'Initia Testnet',
   nativeCurrency: { name: 'INIT', symbol: 'INIT', decimals: 18 },
   rpcUrls: {
