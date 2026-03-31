@@ -19,7 +19,7 @@ const initiaTestnet = {
   name: 'Initia Testnet',
   nativeCurrency: { name: 'INIT', symbol: 'INIT', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://exothermally-multiplated-dannie.ngrok-free.dev'] },
+    default: { http: ['http://204.168.233.1/rpc'] },
   },
 } as const
 
