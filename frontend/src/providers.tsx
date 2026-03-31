@@ -13,10 +13,10 @@ import css from '@initia/interwovenkit-react/styles.css?inline'
 
 import { COSMOS_CHAIN_ID } from './config/chain'
 
-// Initia Testnet EVM — shows "Initia Testnet" not "Ethereum"
+// INIPoker L2 EVM — shows "INIPoker L2" not "Ethereum"
 const initiaTestnet = {
-  id: 27364052648649445,
-  name: 'Initia Testnet',
+  id: 2649570508572901,
+  name: 'INIPoker L2',
   nativeCurrency: { name: 'INIT', symbol: 'INIT', decimals: 18 },
   rpcUrls: {
     default: { http: ['http://204.168.233.1/rpc'] },
