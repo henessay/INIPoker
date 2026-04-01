@@ -4,6 +4,7 @@
   "installCommand": "npm install",
   "framework": "vite",
   "rewrites": [
+    { "source": "/api/rpc", "destination": "http://204.168.233.1/rpc" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

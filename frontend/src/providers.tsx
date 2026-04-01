@@ -19,7 +19,7 @@ const initiaTestnet = {
   name: 'INIPoker L2',
   nativeCurrency: { name: 'INIT', symbol: 'INIT', decimals: 18 },
   rpcUrls: {
-    default: { http: ['http://204.168.233.1/rpc'] },
+    default: { http: ['/api/rpc'] },
   },
 } as const
 
