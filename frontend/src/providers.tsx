@@ -13,20 +13,21 @@ import css from '@initia/interwovenkit-react/styles.css?inline'
 
 import { COSMOS_CHAIN_ID } from './config/chain'
 
-// INIPoker L2 EVM — shows "INIPoker L2" not "Ethereum"
+const RPC = '/api/rpc'
+
 const initiaTestnet = {
-  id: 2649570508572901,
-  name: 'INIPoker L2',
+  id: 2649570508581093,
+  name: 'INIPoker Minitia L2',
   nativeCurrency: { name: 'INIT', symbol: 'INIT', decimals: 18 },
   rpcUrls: {
-    default: { http: ['/api/rpc'] },
+    default: { http: [RPC] },
   },
 } as const
 
 const wagmiConfig = createConfig({
   connectors: [initiaPrivyWalletConnector],
   chains: [initiaTestnet],
-  transports: { [initiaTestnet.id]: http() },
+  transports: { [initiaTestnet.id]: http(RPC) },
 })
 
 const queryClient = new QueryClient()
