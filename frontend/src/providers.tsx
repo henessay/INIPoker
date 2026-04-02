@@ -13,7 +13,7 @@ import css from '@initia/interwovenkit-react/styles.css?inline'
 
 import { COSMOS_CHAIN_ID } from './config/chain'
 
-const RPC = 'https://values-structure-relationship-johnston.trycloudflare.com'
+const RPC = 'https://inipoker.duckdns.org/rpc'
 
 const initiaTestnet = {
   id: 2649570508581093,
