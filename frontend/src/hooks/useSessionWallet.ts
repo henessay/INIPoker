@@ -87,7 +87,7 @@ export function useSessionWallet() {
   const initClients = useCallback(async (privKey: `0x${string}`) => {
     const account = privateKeyToAccount(privKey)
     const tmp = createPublicClient({ transport: http(RPC_URL) })
-    let chainId = 57073
+    let chainId = 2649570508581093
     try { chainId = await tmp.getChainId() } catch {}
     const chain: Chain = {
       id: chainId, name: 'INIPoker L2',
