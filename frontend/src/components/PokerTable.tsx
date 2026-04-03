@@ -317,7 +317,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
       const sessionAddr = await session.createSession(address!)
       const buyInWei = parseEther(buyIn.toString())
       const gasReserveWei = parseEther(SESSION_GAS_RESERVE)
-      await sendTransactionAsync({ to: sessionAddr as `0x${string}`, value: buyInWei + gasReserveWei, gas: 50_000n, gasPrice: 1_000_000_000n })
+      await sendTransactionAsync({ to: sessionAddr as `0x${string}`, value: buyInWei + gasReserveWei, gas: 100_000n, gasPrice: 1_000_000_000n })
       addLog(`Funding session wallet...`)
       const ok = await session.depositAndJoin(tableId, buyInWei)
       if (ok) { setBuyInOpen(false); addLog(`Seated with ${buyIn} INIT`); refreshAll() }
