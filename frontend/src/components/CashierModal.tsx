@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { parseEther } from 'viem'
-import { useWalletClient, usePublicClient } from 'wagmi'
+import { useWriteContract } from 'wagmi'
 import { POKER_GAME_ADDRESS, POKER_GAME_ABI } from '../config/contract'
 
 export interface CashierProps {
@@ -21,61 +21,51 @@ export default function CashierModal({
   const [tab, setTab] = useState<'deposit' | 'withdraw'>('deposit')
   const [amount, setAmount] = useState('')
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err' | 'info'; msg: string } | null>(null)
-  const [isPending, setIsPending] = useState(false)
-  const { data: walletClient } = useWalletClient()
-  const publicClient = usePublicClient()
+  const { writeContractAsync, isPending } = useWriteContract()
 
   useEffect(() => { setFeedback(null); setAmount('') }, [tab, isOpen])
 
   const handleDeposit = async () => {
     const val = parseFloat(amount)
     if (!val || val <= 0) return setFeedback({ type: 'err', msg: 'Enter a valid amount' })
-    if (!walletClient) return setFeedback({ type: 'err', msg: 'Wallet not connected' })
     try {
-      setIsPending(true)
       setFeedback({ type: 'info', msg: 'Confirming deposit...' })
-      const hash = await walletClient.writeContract({
+      const hash = await writeContractAsync({
         address: POKER_GAME_ADDRESS,
         abi: POKER_GAME_ABI,
         functionName: 'deposit',
         value: parseEther(amount),
-        gas: 200000n,
+        gas: 500000n,
         gasPrice: 1000000000n,
       })
-      setFeedback({ type: 'ok', msg: `Deposited ${amount} INIT! Tx: ${hash.slice(0,10)}...` })
+      setFeedback({ type: 'ok', msg: `Deposited ${amount} INIT!` })
       setAmount('')
       setTimeout(() => onRefreshBalances?.(), 2000)
     } catch (err: any) {
-      console.error('Deposit error full:', err)
+      console.error('Deposit error:', err)
       setFeedback({ type: 'err', msg: err.shortMessage ?? err.message })
-    } finally {
-      setIsPending(false)
     }
   }
 
   const handleWithdraw = async () => {
     const val = parseFloat(amount)
     if (!val || val <= 0) return setFeedback({ type: 'err', msg: 'Enter a valid amount' })
-    if (!walletClient) return setFeedback({ type: 'err', msg: 'Wallet not connected' })
     try {
-      setIsPending(true)
       setFeedback({ type: 'info', msg: 'Confirming withdrawal...' })
-      const hash = await walletClient.writeContract({
+      const hash = await writeContractAsync({
         address: POKER_GAME_ADDRESS,
         abi: POKER_GAME_ABI,
         functionName: 'withdraw',
         args: [parseEther(amount)],
-        gas: 200000n,
+        gas: 500000n,
         gasPrice: 1000000000n,
       })
-      setFeedback({ type: 'ok', msg: `Withdrew ${amount} INIT! Tx: ${hash.slice(0,10)}...` })
+      setFeedback({ type: 'ok', msg: `Withdrew ${amount} INIT!` })
       setAmount('')
       setTimeout(() => onRefreshBalances?.(), 2000)
     } catch (err: any) {
-      console.error('Withdraw error full:', err)
+      console.error('Withdraw error:', err)
       setFeedback({ type: 'err', msg: err.shortMessage ?? err.message })
-    } finally {
-      setIsPending(false)
     }
   }
 
