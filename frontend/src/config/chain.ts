@@ -1,1 +1,1 @@
-export const COSMOS_CHAIN_ID: string = 'initiation-2'
+export const COSMOS_CHAIN_ID: string = 'inipoker-minitia-1'
