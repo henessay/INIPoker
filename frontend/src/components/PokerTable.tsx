@@ -16,7 +16,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { formatEther, parseEther } from 'viem'
+import { formatEther, parseEther, keccak256, toHex } from 'viem'
 import { useAccount, useReadContract, useReadContracts, useSendTransaction, useWriteContract } from 'wagmi'
 import { useInterwovenKit } from '@initia/interwovenkit-react'
 import { POKER_GAME_ADDRESS, POKER_GAME_ABI } from '../config/contract'
@@ -323,10 +323,20 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   //  ACTION HANDLERS
   // ==========================================================
 
-  const doAction = async (fn: () => Promise<string|null>, label: string) => {
+  const doAction = async (fnName: string, args: unknown[], label: string, value?: bigint) => {
     setActionPending(true); setLocalError(null)
-    const hash = await fn()
-    if (hash) { setLastTxHash(hash); addLog(label) }
+    try {
+      await writeContractAsync({
+        address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI,
+        functionName: fnName, args,
+        gas: 500_000n, gasPrice: 1_000_000_000n,
+        ...(value ? { value } : {}),
+      } as any)
+      addLog(label)
+    } catch (err: any) {
+      console.error(fnName, err)
+      setLocalError(err.shortMessage ?? err.message)
+    }
     setActionPending(false)
     setTimeout(refreshAll, 1000)
     setTimeout(refreshAll, 3000)
@@ -361,46 +371,36 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   }
 
   const handleLeave = async () => {
-    setLocalError(null); addLog('Leaving table...')
-    const ok = await session.leaveAndCashout(tableId)
-    if (ok) { addLog('Left table. INIT returned.'); setHoleCards(null); refreshAll() }
-  }
-
-  const handleLegacyLeave = async () => {
     setLocalError(null)
     try {
       await writeContractAsync({ address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI,
-        functionName: 'leaveTable', args: [tableId], gas: 500_000n, gasPrice: 1_000_000_000n })
-      addLog('Left table (legacy)'); refreshAll()
+        functionName: "leaveTable", args: [tableId], gas: 500_000n, gasPrice: 1_000_000_000n })
+      addLog("Left table"); refreshAll()
     } catch (err: any) { setLocalError(err.shortMessage ?? err.message) }
   }
 
-  const handleFold      = () => doAction(() => session.fold(tableId), 'You folded')
-  const handleCheck     = () => doAction(() => session.check(tableId), 'You checked')
-  const handleCall      = () => doAction(() => session.callAction(tableId), 'You called')
-  const handleBet       = () => { const a=betAmount; doAction(() => session.bet(tableId, parseEther(a||'0')), `You bet ${a} INIT`) }
-  const handleRaise     = () => { const a=betAmount; doAction(() => session.raise(tableId, parseEther(a||'0')), `You raised ${a} INIT`) }
-  const handleAllIn     = () => doAction(() => session.allIn(tableId), 'You went ALL-IN!')
-  const handleCommit    = () => doAction(() => session.commitSalt(tableId), 'Salt committed')
-  const handleDeal      = () => doAction(() => session.requestDeal(tableId), 'Deal requested')
-  const handleReveal    = () => doAction(() => session.revealCards(tableId), 'Cards revealed')
-  const handleEvaluate  = () => doAction(() => session.evaluateShowdown(tableId), 'Showdown evaluated')
+  const handleFold      = () => doAction("playerAction", [tableId, 1, 0n], "You folded")
+  const handleCheck     = () => doAction("playerAction", [tableId, 2, 0n], "You checked")
+  const handleCall      = () => doAction("playerAction", [tableId, 4, 0n], "You called")
+  const handleBet       = () => { const a=betAmount; doAction("playerAction", [tableId, 3, parseEther(a||"0")], `You bet ${a} INIT`) }
+  const handleRaise     = () => { const a=betAmount; doAction("playerAction", [tableId, 5, parseEther(a||"0")], `You raised ${a} INIT`) }
+  const handleAllIn     = () => doAction("playerAction", [tableId, 6, 0n], "You went ALL-IN!")
+  const handleCommit    = async () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(32))
+    const hex = toHex(bytes)
+    const hash = keccak256(hex as `0x${string}`)
+    sessionStorage.setItem(`inipoker_salt_${tableId}`, hex)
+    await doAction("commitSalt", [tableId, hash], "Salt committed")
+  }
+  const handleDeal      = () => doAction("requestDeal", [tableId], "Deal requested")
+  const handleReveal    = async () => {
+    const salt = sessionStorage.getItem(`inipoker_salt_${tableId}`)
+    if (!salt) { setLocalError("Salt not found"); return }
+    await doAction("revealHoleCards", [tableId, salt as `0x${string}`], "Cards revealed")
+  }
+  const handleEvaluate  = () => doAction("evaluateShowdown", [tableId], "Showdown evaluated")
 
   const txBusy = actionPending || session.processing || legacyPending
-  // Auto commit salt + deal when ready
-  const autoRef = useRef(false)
-  useEffect(() => {
-    if (!session.active || !isSeated || txBusy || autoRef.current) return
-    if ((status === 0 || status === 7) && playerCount >= 2) {
-      if (saltsCommitted < playerCount) {
-        autoRef.current = true
-        handleCommit().then(() => { autoRef.current = false })
-      } else if (saltsCommitted >= playerCount) {
-        autoRef.current = true
-        handleDeal().then(() => { autoRef.current = false })
-      }
-    }
-  }, [session.active, isSeated, status, playerCount, saltsCommitted, txBusy])
 
 
   // Bet helpers
@@ -561,7 +561,11 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
             <button onClick={()=>setBuyInOpen(true)} style={st.btnAction} disabled={txBusy}>Sit Down</button>
           )}
 
-          {/* Auto commit/deal - handled by useEffect */}
+          {/* Commit / Deal - auto triggered */}
+          {(status===0||status===7) && isSeated && (<>
+            {saltsCommitted < playerCount && <button onClick={handleCommit} style={st.btnAction} disabled={txBusy}>Commit Salt</button>}
+            {saltsCommitted >= playerCount && playerCount >= 2 && <button onClick={handleDeal} style={st.btnAction} disabled={txBusy}>Deal Cards</button>}
+          </>)}
 
           {/* Poker actions */}
           {status>=2 && status<=5 && isSeated && session.active && isMyTurn && (<>
