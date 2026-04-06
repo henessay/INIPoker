@@ -1,5 +1,5 @@
-﻿/**
- * PokerTable.tsx — Full poker UI with all 10 features
+/**
+ * PokerTable.tsx � Full poker UI with all 10 features
  *
  * 1. Hole cards (Fisher-Yates reconstruction from deckSeed)
  * 2. Whose turn indicator (activePlayerIndex from sessions())
@@ -25,11 +25,11 @@ import CashierModal from './CashierModal'
 import { useWalletBalance } from '../hooks/useWalletBalance'
 import { useSessionWallet, fisherYatesShuffle, getHoleCardsFromDeck } from '../hooks/useSessionWallet'
 
-// ── Constants ──
+// -- Constants --
 const STATUS_LABELS = ['Waiting','Dealing','Pre-Flop','Flop','Turn','River','Showdown','Settled'] as const
 const ACTION_LABELS = ['','Fold','Check','Bet','Call','Raise','All-In'] as const
 const HAND_RANKS = ['High Card','One Pair','Two Pair','Three of a Kind','Straight','Flush','Full House','Four of a Kind','Straight Flush','Royal Flush'] as const
-const SUITS = ['♠','♥','♦','♣'] as const
+const SUITS = ['�','�','�','�'] as const
 const SUIT_COLORS = ['#ccc','#E07070','#7EAECF','#7ECFB3'] as const
 const VALUES = ['','A','2','3','4','5','6','7','8','9','10','J','Q','K'] as const
 
@@ -45,7 +45,7 @@ const SEAT_POS = [
 
 const TURN_TIMEOUT = 60 // seconds
 
-// ── Card component ──
+// -- Card component --
 function Card({ encoded, size = 'normal' }: { encoded: number; size?: 'normal' | 'large' }) {
   if (!encoded) return <span style={size === 'large' ? st.cardBackLg : st.cardBack}>?</span>
   const suit = encoded >> 4
@@ -59,7 +59,7 @@ function handRankName(rank: number): string {
   return HAND_RANKS[cat] ?? `Rank ${cat}`
 }
 
-// ── Player state type ──
+// -- Player state type --
 interface PState {
   addr: string
   stake: bigint
@@ -71,18 +71,18 @@ interface PState {
   handRank: number
 }
 
-// ══════════════════════════════════════════════════════════
+// ==========================================================
 //  BUY-IN MODAL
-// ══════════════════════════════════════════════════════════
+// ==========================================================
 
-function BuyInModal({ bigBlind, walletBalance, onConfirm, onClose, isProcessing, sessionStatus }: {
-  bigBlind: number; walletBalance: string; onConfirm: (a: number) => void; onClose: () => void
+function BuyInModal({ bigBlind, gameBalance, onConfirm, onClose, isProcessing, sessionStatus }: {
+  bigBlind: number; gameBalance: string; onConfirm: (a: number) => void; onClose: () => void
   isProcessing: boolean; sessionStatus: string
 }) {
   const minBuy = bigBlind * 10
   const maxBuy = bigBlind * 100
   const gasRes = parseFloat(SESSION_GAS_RESERVE)
-  const avail = Math.max(0, parseFloat(walletBalance) - gasRes)
+  const avail = Math.max(0, parseFloat(gameBalance))
   const effMax = Math.min(maxBuy, avail)
   const [val, setVal] = useState(Math.min(bigBlind * 50, effMax > minBuy ? effMax : minBuy))
   const canJoin = val >= minBuy && val <= effMax && !isProcessing
@@ -92,11 +92,11 @@ function BuyInModal({ bigBlind, walletBalance, onConfirm, onClose, isProcessing,
       <div style={st.modal} onClick={e => e.stopPropagation()}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}}>
           <span style={{fontSize:'16px',fontWeight:600,color:'#fff'}}>Take a Seat</span>
-          {!isProcessing && <button onClick={onClose} style={{background:'none',border:'none',color:'#555',fontSize:'18px',cursor:'pointer'}}>✕</button>}
+          {!isProcessing && <button onClick={onClose} style={{background:'none',border:'none',color:'#555',fontSize:'18px',cursor:'pointer'}}>?</button>}
         </div>
         {isProcessing ? (
           <div style={{textAlign:'center',padding:'24px 0'}}>
-            <div style={{fontSize:'13px',color:'#E8DCC8',marginBottom:'8px'}}>⏳ {sessionStatus||'Processing...'}</div>
+            <div style={{fontSize:'13px',color:'#E8DCC8',marginBottom:'8px'}}>? {sessionStatus||'Processing...'}</div>
             <div style={{fontSize:'11px',color:'#555'}}>Do not close this window</div>
           </div>
         ) : (<>
@@ -106,13 +106,13 @@ function BuyInModal({ bigBlind, walletBalance, onConfirm, onClose, isProcessing,
               <div style={{fontSize:'14px',fontWeight:600,color:'#E8DCC8',marginTop:'2px'}}>{bigBlind}</div>
             </div>
             <div style={{flex:1,background:'#0F0F0F',borderRadius:'6px',padding:'8px',textAlign:'center'}}>
-              <div style={{fontSize:'9px',color:'#555',textTransform:'uppercase',fontWeight:600}}>Available</div>
+              <div style={{fontSize:'9px',color:'#555',textTransform:'uppercase',fontWeight:600}}>Game Balance</div>
               <div style={{fontSize:'14px',fontWeight:600,color:'#7ECFB3',marginTop:'2px'}}>{avail.toFixed(2)}</div>
             </div>
           </div>
           <div style={{textAlign:'center',margin:'10px 0'}}>
             <div style={{fontSize:'28px',fontWeight:700,color:'#fff',fontFamily:'"DM Mono",monospace'}}>{val.toFixed(1)}</div>
-            <div style={{fontSize:'11px',color:'#555'}}>INIT · {Math.round(val/bigBlind)} bb</div>
+            <div style={{fontSize:'11px',color:'#555'}}>INIT � {Math.round(val/bigBlind)} bb</div>
           </div>
           <div style={{padding:'0 4px',margin:'14px 0'}}>
             <input type="range" min={minBuy} max={effMax>minBuy?effMax:minBuy+bigBlind} step={bigBlind} value={val}
@@ -130,13 +130,13 @@ function BuyInModal({ bigBlind, walletBalance, onConfirm, onClose, isProcessing,
               return <button key={bb} onClick={()=>setVal(Math.min(a,effMax))} style={{flex:1,padding:'6px',fontSize:'10px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',background:Math.abs(val-a)<bigBlind*0.5?'#E8DCC8':'#0F0F0F',color:Math.abs(val-a)<bigBlind*0.5?'#000':'#666',border:'1px solid #1C1C1C',borderRadius:'4px'}}>{bb}bb</button>
             })}
           </div>
-          {avail<minBuy && <div style={{padding:'8px',background:'rgba(224,112,112,0.08)',border:'1px solid rgba(224,112,112,0.2)',borderRadius:'6px',fontSize:'11px',color:'#E07070',marginBottom:'12px'}}>Not enough balance. Need {(minBuy+gasRes).toFixed(1)} INIT.</div>}
+          {avail<minBuy && <div style={{padding:'8px',background:'rgba(224,112,112,0.08)',border:'1px solid rgba(224,112,112,0.2)',borderRadius:'6px',fontSize:'11px',color:'#E07070',marginBottom:'12px'}}>Not enough game balance. Deposit via Cashier. Need {(minBuy+gasRes).toFixed(1)} INIT.</div>}
           <div style={{fontSize:'10px',color:'#555',marginBottom:'12px',lineHeight:1.5}}>
-            Sign <b style={{color:'#E8DCC8'}}>one transaction</b> → all poker actions fire instantly with zero popups. Remaining INIT returns when you leave.
+            Sign <b style={{color:'#E8DCC8'}}>one transaction</b> > all poker actions fire instantly with zero popups. Remaining INIT returns when you leave.
           </div>
           <button onClick={()=>canJoin&&onConfirm(val)} disabled={!canJoin}
             style={{width:'100%',padding:'12px',fontSize:'14px',fontWeight:600,cursor:canJoin?'pointer':'not-allowed',fontFamily:'inherit',background:canJoin?'#E8DCC8':'#1C1C1C',color:canJoin?'#000':'#3a3a3a',border:'none',borderRadius:'8px'}}>
-            Sit Down · {val.toFixed(1)} INIT
+            Sit Down � {val.toFixed(1)} INIT
           </button>
         </>)}
       </div>
@@ -144,9 +144,9 @@ function BuyInModal({ bigBlind, walletBalance, onConfirm, onClose, isProcessing,
   )
 }
 
-// ══════════════════════════════════════════════════════════
+// ==========================================================
 //  MAIN COMPONENT
-// ══════════════════════════════════════════════════════════
+// ==========================================================
 
 export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = 'Table', onBack }: {
   tableId?: bigint; bigBlind?: number; tableName?: string; onBack?: () => void
@@ -175,7 +175,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   const playerAddr = (session.active && session.address) ? session.address as `0x${string}` : address
   const hasContract = POKER_GAME_ADDRESS !== '0x0000000000000000000000000000000000000000'
 
-  // ── Read full session (includes deckSeed, activePlayerIndex) ──
+  // -- Read full session (includes deckSeed, activePlayerIndex) --
   const { data: fullSession, refetch: refetchFull } = useReadContract({
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI,
     functionName: 'sessions', args: [tableId],
@@ -194,7 +194,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
     query: { enabled: hasContract, refetchInterval: 3000 },
   })
 
-  // ── Read ALL player states via multicall ──
+  // -- Read ALL player states via multicall --
   const playerAddrs = (players as readonly `0x${string}`[] | undefined) ?? []
   const playerStateContracts = playerAddrs.map(addr => ({
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI,
@@ -205,7 +205,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
     query: { enabled: playerStateContracts.length > 0, refetchInterval: 3000 },
   })
 
-  // ── Parse all data ──
+  // -- Parse all data --
   const fs = fullSession as any
   const status = fs ? Number(fs[5]) : 0
   const dealerIndex = fs ? Number(fs[6]) : 0
@@ -256,10 +256,10 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
     return low === address?.toLowerCase() || low === session.address?.toLowerCase()
   }
 
-  const truncAddr = (a: string) => `${a.slice(0,6)}…${a.slice(-4)}`
+  const truncAddr = (a: string) => `${a.slice(0,6)}�${a.slice(-4)}`
   const error = localError || session.error
 
-  // ── Hole card reconstruction from deckSeed ──
+  // -- Hole card reconstruction from deckSeed --
   useEffect(() => {
     if (!deckSeed || deckSeed === '0x0000000000000000000000000000000000000000000000000000000000000000') {
       setHoleCards(null); return
@@ -274,7 +274,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
     } catch { setHoleCards(null) }
   }, [deckSeed, dealerIndex, mySeatIndex, playerCount, status, isSeated])
 
-  // ── Turn timer ──
+  // -- Turn timer --
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current)
     if (isMyTurn) {
@@ -284,23 +284,23 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [isMyTurn, activePlayerIdx])
 
-  // ── Auto-scroll action log ──
+  // -- Auto-scroll action log --
   useEffect(() => { logRef.current?.scrollTo(0, logRef.current.scrollHeight) }, [actionLog])
 
   // Winner detection
   const winner = status === 7 ? allPlayers.reduce((best, p) =>
     p.handRank > (best?.handRank ?? 0) ? p : best, null as PState | null) : null
 
-  // ── Refresh helper ──
+  // -- Refresh helper --
   const refreshAll = useCallback(() => {
     refetchFull(); refetchPlayers(); refetchStates(); refetchBal()
   }, [refetchFull, refetchPlayers, refetchStates, refetchBal])
 
   const addLog = (msg: string) => setActionLog(prev => [...prev.slice(-19), `${new Date().toLocaleTimeString().slice(0,5)} ${msg}`])
 
-  // ══════════════════════════════════════════════════════════
+  // ==========================================================
   //  ACTION HANDLERS
-  // ══════════════════════════════════════════════════════════
+  // ==========================================================
 
   const doAction = async (fn: () => Promise<string|null>, label: string) => {
     setActionPending(true); setLocalError(null)
@@ -371,20 +371,20 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   const potF = parseFloat(formatEther(pot))
   const setBetHelper = (x: number) => setBetAmount(Math.max(parseFloat(formatEther(currentBet)) + 0.01, x).toFixed(2))
 
-  // ══════════════════════════════════════════════════════════
+  // ==========================================================
   //  RENDER
-  // ══════════════════════════════════════════════════════════
+  // ==========================================================
 
   return (
     <div style={st.root}>
       {/* HEADER */}
       <header style={st.header}>
         <div style={st.brand}>
-          {onBack && <button onClick={onBack} style={st.btnBack}>← Back</button>}
-          <span style={{color:'#E8DCC8',fontSize:'14px'}}>◆</span>
+          {onBack && <button onClick={onBack} style={st.btnBack}>< Back</button>}
+          <span style={{color:'#E8DCC8',fontSize:'14px'}}>?</span>
           <h1 style={st.title}>{tableName}</h1>
           <span style={st.badge}>{STATUS_LABELS[status]}</span>
-          {session.active && <span style={st.sessionBadge}>● Session</span>}
+          {session.active && <span style={st.sessionBadge}>? Session</span>}
         </div>
         <div style={st.headerRight}>
           {isConnected && <button onClick={()=>setCashierOpen(true)} style={st.btnCashier}>Cashier</button>}
@@ -397,9 +397,9 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
       <div style={st.strip}>
         <span style={{...st.dot,background:isConnected?'#7ECFB3':'#E07070'}} />
         <span style={st.dim}>{isConnected?'Connected':'Disconnected'}</span>
-        {isConnected && <span style={st.balVal}>Wallet: {balLoading?'…':walletBalance} INIT</span>}
+        {isConnected && <span style={st.balVal}>Wallet: {balLoading?'�':walletBalance} INIT</span>}
         {isSeated && <span style={{color:'#E8DCC8',fontWeight:600}}>Stack: {formatEther(myStake)} INIT</span>}
-        {isMyTurn && <span style={{color:'#7ECFB3',fontWeight:700,fontSize:'12px'}}>⚡ YOUR TURN ({turnTimer}s)</span>}
+        {isMyTurn && <span style={{color:'#7ECFB3',fontWeight:700,fontSize:'12px'}}>? YOUR TURN ({turnTimer}s)</span>}
       </div>
 
       {/* MESSAGES */}
@@ -409,9 +409,9 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
       {/* WINNER BANNER */}
       {winner && status === 7 && (
         <div style={st.winnerBanner}>
-          🏆 {isMe(winner.addr) ? 'YOU WON!' : truncAddr(winner.addr) + ' wins'}
-          {winner.handRank > 0 && ` — ${handRankName(winner.handRank)}`}
-          {pot > 0n && ` — ${formatEther(pot)} INIT`}
+          ?? {isMe(winner.addr) ? 'YOU WON!' : truncAddr(winner.addr) + ' wins'}
+          {winner.handRank > 0 && ` � ${handRankName(winner.handRank)}`}
+          {pot > 0n && ` � ${formatEther(pot)} INIT`}
         </div>
       )}
 
@@ -423,7 +423,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
           {/* Pot */}
           <div style={st.potArea}>
             <div style={st.potLabel}>POT</div>
-            <div style={st.potValue}>{pot ? formatEther(pot) : '—'}</div>
+            <div style={st.potValue}>{pot ? formatEther(pot) : '�'}</div>
             {currentBet > 0n && <div style={{fontSize:'10px',color:'#555'}}>Bet: {formatEther(currentBet)} INIT</div>}
           </div>
 
@@ -431,7 +431,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
           <div style={st.communityArea}>
             {community.length > 0
               ? community.map((c,i) => <Card key={i} encoded={c} />)
-              : <span style={{color:'#333',fontSize:'11px',fontStyle:'italic'}}>{status>=2?'Waiting for cards…':'No cards'}</span>}
+              : <span style={{color:'#333',fontSize:'11px',fontStyle:'italic'}}>{status>=2?'Waiting for cards�':'No cards'}</span>}
           </div>
 
           {/* Hole cards (YOUR cards) */}
@@ -487,7 +487,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
                       </div>
                     )}
                     {/* Turn indicator */}
-                    {isTurn && <div style={{fontSize:'8px',color:'#7ECFB3',fontWeight:700,marginTop:'2px'}}>⏎ TURN</div>}
+                    {isTurn && <div style={{fontSize:'8px',color:'#7ECFB3',fontWeight:700,marginTop:'2px'}}>? TURN</div>}
                   </div>
                 </div>
               )
@@ -540,9 +540,9 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
             <button onClick={handleAllIn} style={st.btnAllIn} disabled={txBusy}>All-In</button>
             {/* Bet helpers */}
             <div style={{display:'flex',gap:'4px'}}>
-              <button onClick={()=>setBetHelper(potF*0.5)} style={st.btnHelper}>½ Pot</button>
+              <button onClick={()=>setBetHelper(potF*0.5)} style={st.btnHelper}>? Pot</button>
               <button onClick={()=>setBetHelper(potF)} style={st.btnHelper}>Pot</button>
-              <button onClick={()=>setBetHelper(potF*2)} style={st.btnHelper}>2× Pot</button>
+              <button onClick={()=>setBetHelper(potF*2)} style={st.btnHelper}>2? Pot</button>
             </div>
           </>)}
 
@@ -567,27 +567,27 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
             <button onClick={session.emergencyRecover} style={st.btnRecover}>Recover Funds</button>
           )}
 
-          {txBusy && <span style={{color:'#E8DCC8',fontSize:'11px',fontWeight:600}}>Processing…</span>}
+          {txBusy && <span style={{color:'#E8DCC8',fontSize:'11px',fontWeight:600}}>Processing�</span>}
         </div>
       )}
 
       {/* MODALS */}
-      {buyInOpen && <BuyInModal bigBlind={bigBlind} walletBalance={walletBalance} onConfirm={handleSitDown}
+      {buyInOpen && <BuyInModal bigBlind={bigBlind} gameBalance={gameBalance} onConfirm={handleSitDown}
         onClose={()=>!session.processing&&setBuyInOpen(false)} isProcessing={session.processing} sessionStatus={session.status} />}
       <CashierModal isOpen={cashierOpen} onClose={()=>setCashierOpen(false)} walletBalance={walletBalance}
         gameBalance={gameBalance} isLoading={balLoading} onRefreshBalances={refetchBal} />
 
       <footer style={st.footer}>
         <span style={{color:'#2a2a2a'}}>INIPoker</span>
-        <span style={{color:'#1C1C1C'}}>Session Wallet · Band VRF · Commit-Reveal</span>
+        <span style={{color:'#1C1C1C'}}>Session Wallet � Band VRF � Commit-Reveal</span>
       </footer>
     </div>
   )
 }
 
-// ══════════════════════════════════════════════════════════
+// ==========================================================
 //  STYLES
-// ══════════════════════════════════════════════════════════
+// ==========================================================
 const st: Record<string,React.CSSProperties> = {
   root:{minHeight:'100vh',background:'#000',color:'#b0b0b0',fontFamily:'"DM Sans",sans-serif',display:'flex',flexDirection:'column'},
   header:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 16px',borderBottom:'1px solid #161616'},
