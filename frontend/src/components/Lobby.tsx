@@ -16,22 +16,22 @@ interface Tournament { id: number; name: string; type: GameType; buyIn: number; 
 
 // ── TEST TABLES (tiny blinds for easy testing) ──
 const TEST_TABLES: Table[] = [
-  { id: 0, name: 'Test Micro 01', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0, featured: true },
-  { id: 1, name: 'Test Micro 02', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0 },
+  { id: 4, name: 'Test Micro 01', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0, featured: true },
+  { id: 5, name: 'Test Micro 02', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0 },
 ]
 
 const HOLDEM_TABLES: Table[] = [
-  { id: 10, name: 'Emerald 01', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 0, max: 6, avgPot: '136', flop: '54%', hhr: 112 },
-  { id: 11, name: 'Emerald 02', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 0, max: 6, avgPot: '98', flop: '50%', hhr: 108 },
-  { id: 12, name: 'Ruby 01', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 0, max: 6, avgPot: '420', flop: '48%', hhr: 103, featured: true },
-  { id: 13, name: 'Ruby 02', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 0, max: 6, avgPot: '380', flop: '46%', hhr: 99 },
-  { id: 14, name: 'Onyx 01', type: 'holdem', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 0, max: 6, avgPot: '1,200', flop: '42%', hhr: 90 },
+  { id: 6, name: 'Emerald 01', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 0, max: 6, avgPot: '136', flop: '54%', hhr: 112 },
+  { id: 7, name: 'Emerald 02', type: 'holdem', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 0, max: 6, avgPot: '98', flop: '50%', hhr: 108 },
+  { id: 8, name: 'Ruby 01', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 0, max: 6, avgPot: '420', flop: '48%', hhr: 103, featured: true },
+  { id: 9, name: 'Ruby 02', type: 'holdem', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 0, max: 6, avgPot: '380', flop: '46%', hhr: 99 },
+  { id: 10, name: 'Onyx 01', type: 'holdem', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 0, max: 6, avgPot: '1,200', flop: '42%', hhr: 90 },
 ]
 
 const OMAHA_TABLES: Table[] = [
-  { id: 20, name: 'Omaha Emerald', type: 'omaha', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 0, max: 6, avgPot: '190', flop: '58%', hhr: 95 },
-  { id: 21, name: 'Omaha Ruby', type: 'omaha', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 0, max: 6, avgPot: '580', flop: '62%', hhr: 88, featured: true },
-  { id: 22, name: 'Omaha Onyx', type: 'omaha', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 0, max: 6, avgPot: '2,800', flop: '55%', hhr: 82 },
+  { id: 11, name: 'Omaha Emerald', type: 'omaha', blinds: '1/2', smallBlind: 1, bigBlind: 2, buyIn: '20–200', players: 0, max: 6, avgPot: '190', flop: '58%', hhr: 95 },
+  { id: 12, name: 'Omaha Ruby', type: 'omaha', blinds: '5/10', smallBlind: 5, bigBlind: 10, buyIn: '100–1,000', players: 0, max: 6, avgPot: '580', flop: '62%', hhr: 88, featured: true },
+  { id: 13, name: 'Omaha Onyx', type: 'omaha', blinds: '25/50', smallBlind: 25, bigBlind: 50, buyIn: '500–5,000', players: 0, max: 6, avgPot: '2,800', flop: '55%', hhr: 82 },
 ]
 
 const VIP_TABLES: Table[] = [
@@ -450,3 +450,4 @@ const s: Record<string, React.CSSProperties> = {
 
   bottom: { display:'flex', alignItems:'center', gap:'20px', padding:'8px 20px', borderTop:'1px solid #111', fontSize:'10px', color:'#2a2a2a' },
 }
+
