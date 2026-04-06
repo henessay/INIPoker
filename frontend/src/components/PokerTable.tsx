@@ -43,9 +43,9 @@ const SEAT_POSITIONS = [
   { top:'22%', left:'12%' },  // 5: left top
 ]
 // Rotate seats so mySeat is always at bottom (index 3)
-function getRotatedPos(seatIdx: number, mySeat: number, total: number): {top:string,left:string} {
-  const offset = (3 - mySeat + total) % total
-  const visualIdx = (seatIdx + offset) % total
+function getRotatedPos(seatIdx: number, mySeat: number): {top:string,left:string} {
+  const offset = (3 - mySeat + 6) % 6
+  const visualIdx = (seatIdx + offset) % 6
   return SEAT_POSITIONS[visualIdx] || SEAT_POSITIONS[0]
 }
 
@@ -483,7 +483,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
             {Array.from({length: Math.max(playerCount, 2) || 6}, (_, seatIdx) => seatIdx).map((seatIdx) => {
               const player = allPlayers.find(p => p.seatIndex === seatIdx)
               if (!player) return (
-                <div key={seatIdx} style={{...st.seatWrap,...getRotatedPos(seatIdx, mySeatIndex, Math.max(playerCount, 2) || 6),transform:'translate(-50%,-50%)'}}>
+                <div key={seatIdx} style={{...st.seatWrap,...getRotatedPos(seatIdx, mySeatIndex),transform:'translate(-50%,-50%)'}}>
                   <div style={st.emptySeat}>{seatIdx}</div>
                 </div>
               )
@@ -494,7 +494,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
               const isBB = (dealerIndex + 2) % playerCount === seatIdx
 
               return (
-                <div key={seatIdx} style={{...st.seatWrap,...getRotatedPos(seatIdx, mySeatIndex, Math.max(playerCount, 2) || 6),transform:'translate(-50%,-50%)'}}>
+                <div key={seatIdx} style={{...st.seatWrap,...getRotatedPos(seatIdx, mySeatIndex),transform:'translate(-50%,-50%)'}}>
                   <div style={{...st.seatBox, ...(me?st.seatMe:{}), ...(isTurn?st.seatTurn:{}), ...(!player.isActive?{opacity:0.4}:{})}}>
                     {/* Markers */}
                     <div style={{display:'flex',gap:'3px',position:'absolute',top:'-10px',left:'50%',transform:'translateX(-50%)'}}>
