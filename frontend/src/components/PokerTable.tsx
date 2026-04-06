@@ -168,6 +168,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   const [lastTxHash, setLastTxHash] = useState<string|null>(null)
   const [localError, setLocalError] = useState<string|null>(null)
   const [cashierOpen, setCashierOpen] = useState(false)
+  const [localStatus, setLocalStatus] = useState<string|null>(null)
   const [buyInOpen, setBuyInOpen] = useState(false)
   const [actionPending, setActionPending] = useState(false)
   const [holeCards, setHoleCards] = useState<[number,number]|null>(null)
