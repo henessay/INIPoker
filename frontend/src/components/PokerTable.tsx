@@ -256,7 +256,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   const mySeatIndex = myPlayer?.seatIndex ?? 0
   const isMyTurn = status >= 2 && status <= 5 && isSeated &&
     allPlayers.length > 0 && activePlayerIdx < allPlayers.length &&
-    allPlayers[activePlayerIdx]?.addr?.toLowerCase() === playerAddr?.toLowerCase()
+    allPlayers[activePlayerIdx]?.addr?.toLowerCase() === address?.toLowerCase()
 
   const isMe = (a: string) => {
     const low = a.toLowerCase()
