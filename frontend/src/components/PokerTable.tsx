@@ -1,4 +1,4 @@
-/**
+﻿/**
  * PokerTable.tsx — Full poker UI with all 10 features
  *
  * 1. Hole cards (Fisher-Yates reconstruction from deckSeed)
@@ -350,6 +350,21 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   const handleReveal    = () => doAction(() => session.revealCards(tableId), 'Cards revealed')
   const handleEvaluate  = () => doAction(() => session.evaluateShowdown(tableId), 'Showdown evaluated')
 
+  // Auto commit salt + deal when ready
+  const autoRef = useRef(false)
+  useEffect(() => {
+    if (!session.active || !isSeated || txBusy || autoRef.current) return
+    if ((status === 0 || status === 7) && playerCount >= 2) {
+      if (saltsCommitted < playerCount) {
+        autoRef.current = true
+        handleCommit().then(() => { autoRef.current = false })
+      } else if (saltsCommitted >= playerCount) {
+        autoRef.current = true
+        handleDeal().then(() => { autoRef.current = false })
+      }
+    }
+  }, [session.active, isSeated, status, playerCount, saltsCommitted, txBusy])
+
   const txBusy = actionPending || session.processing || legacyPending
 
   // Bet helpers
@@ -510,11 +525,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
             <button onClick={()=>setBuyInOpen(true)} style={st.btnAction} disabled={txBusy}>Sit Down</button>
           )}
 
-          {/* Commit / Deal */}
-          {(status===0||status===7) && isSeated && session.active && (<>
-            {saltsCommitted < playerCount && <button onClick={handleCommit} style={st.btnAction} disabled={txBusy}>Commit Salt</button>}
-            {saltsCommitted >= playerCount && playerCount >= 2 && <button onClick={handleDeal} style={st.btnAction} disabled={txBusy}>Deal Cards</button>}
-          </>)}
+          {/* Auto commit/deal - handled by useEffect */}
 
           {/* Poker actions */}
           {status>=2 && status<=5 && isSeated && session.active && isMyTurn && (<>
@@ -643,3 +654,6 @@ const st: Record<string,React.CSSProperties> = {
   overlay:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,backdropFilter:'blur(4px)'},
   modal:{background:'#0A0A0A',border:'1px solid #1C1C1C',borderRadius:'12px',padding:'22px',width:'380px',maxWidth:'92vw',fontFamily:'"DM Sans",sans-serif'},
 }
+
+
+
