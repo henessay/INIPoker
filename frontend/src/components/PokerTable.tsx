@@ -568,7 +568,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
           </>)}
 
           {/* Poker actions */}
-          {status>=2 && status<=5 && isSeated && session.active && isMyTurn && (<>
+          {status>=2 && status<=5 && isSeated && isMyTurn && (<>
             <button onClick={handleFold} style={st.btnFold} disabled={txBusy}>Fold</button>
             {currentBet === myBet
               ? <button onClick={handleCheck} style={st.btnAction} disabled={txBusy}>Check</button>
@@ -587,18 +587,18 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
           </>)}
 
           {/* Not your turn indicator */}
-          {status>=2 && status<=5 && isSeated && session.active && !isMyTurn && (
+          {status>=2 && status<=5 && isSeated && !isMyTurn && (
             <span style={{fontSize:'11px',color:'#555'}}>Waiting for opponent...</span>
           )}
 
           {/* Showdown */}
-          {status===6 && isSeated && session.active && (<>
+          {status===6 && isSeated && (<>
             <button onClick={handleReveal} style={st.btnAction} disabled={txBusy}>Reveal Cards</button>
             <button onClick={handleEvaluate} style={st.btnAction} disabled={txBusy}>Evaluate</button>
           </>)}
 
           {/* Leave */}
-          {isSeated && session.active && (status===0||status===7) && (
+          {isSeated && (status===0||status===7) && (
             <button onClick={handleLeave} style={st.btnLeave} disabled={txBusy}>{session.processing?'Leaving...':'Leave Table'}</button>
           )}
 
