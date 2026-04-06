@@ -337,6 +337,13 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
     try {
       const buyInWei = parseEther(buyIn.toString())
       setBuyInOpen(false)
+      setLocalStatus("Depositing...")
+      await writeContractAsync({
+        address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI,
+        functionName: "deposit", args: [],
+        value: buyInWei,
+        gas: 500_000n, gasPrice: 1_000_000_000n,
+      })
       setLocalStatus("Joining table...")
       await writeContractAsync({
         address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI,
@@ -347,6 +354,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
       setLocalStatus(null)
       refreshAll()
     } catch (err: any) {
+      console.error("SitDown error:", err)
       setLocalError(err.shortMessage ?? err.message)
       setLocalStatus(null)
     }
