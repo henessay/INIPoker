@@ -1,5 +1,5 @@
-/**
- * PokerTable.tsx — Full poker UI with all 10 features
+ï»¿/**
+ * PokerTable.tsx ï¿½ Full poker UI with all 10 features
  *
  * 1. Hole cards (Fisher-Yates reconstruction from deckSeed)
  * 2. Whose turn indicator (activePlayerIndex from sessions())
@@ -29,7 +29,7 @@ import { useSessionWallet, fisherYatesShuffle, getHoleCardsFromDeck } from '../h
 const STATUS_LABELS = ['Waiting','Dealing','Pre-Flop','Flop','Turn','River','Showdown','Settled'] as const
 const ACTION_LABELS = ['','Fold','Check','Bet','Call','Raise','All-In'] as const
 const HAND_RANKS = ['High Card','One Pair','Two Pair','Three of a Kind','Straight','Flush','Full House','Four of a Kind','Straight Flush','Royal Flush'] as const
-const SUITS = ['¦','¦','¦','¦'] as const
+const SUITS = ['ï¿½','ï¿½','ï¿½','ï¿½'] as const
 const SUIT_COLORS = ['#ccc','#E07070','#7EAECF','#7ECFB3'] as const
 const VALUES = ['','A','2','3','4','5','6','7','8','9','10','J','Q','K'] as const
 
@@ -112,7 +112,7 @@ function BuyInModal({ bigBlind, gameBalance, onConfirm, onClose, isProcessing, s
           </div>
           <div style={{textAlign:'center',margin:'10px 0'}}>
             <div style={{fontSize:'28px',fontWeight:700,color:'#fff',fontFamily:'"DM Mono",monospace'}}>{val.toFixed(1)}</div>
-            <div style={{fontSize:'11px',color:'#555'}}>INIT · {Math.round(val/bigBlind)} bb</div>
+            <div style={{fontSize:'11px',color:'#555'}}>INIT ï¿½ {Math.round(val/bigBlind)} bb</div>
           </div>
           <div style={{padding:'0 4px',margin:'14px 0'}}>
             <input type="range" min={minBuy} max={effMax>minBuy?effMax:minBuy+bigBlind} step={bigBlind} value={val}
@@ -136,7 +136,7 @@ function BuyInModal({ bigBlind, gameBalance, onConfirm, onClose, isProcessing, s
           </div>
           <button onClick={()=>canJoin&&onConfirm(val)} disabled={!canJoin}
             style={{width:'100%',padding:'12px',fontSize:'14px',fontWeight:600,cursor:canJoin?'pointer':'not-allowed',fontFamily:'inherit',background:canJoin?'#E8DCC8':'#1C1C1C',color:canJoin?'#000':'#3a3a3a',border:'none',borderRadius:'8px'}}>
-            Sit Down · {val.toFixed(1)} INIT
+            Sit Down ï¿½ {val.toFixed(1)} INIT
           </button>
         </>)}
       </div>
@@ -256,7 +256,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
     return low === address?.toLowerCase() || low === session.address?.toLowerCase()
   }
 
-  const truncAddr = (a: string) => `${a.slice(0,6)}…${a.slice(-4)}`
+  const truncAddr = (a: string) => `${a.slice(0,6)}ï¿½${a.slice(-4)}`
   const error = localError || session.error
 
   // -- Hole card reconstruction from deckSeed --
@@ -350,6 +350,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   const handleReveal    = () => doAction(() => session.revealCards(tableId), 'Cards revealed')
   const handleEvaluate  = () => doAction(() => session.evaluateShowdown(tableId), 'Showdown evaluated')
 
+  const txBusy = actionPending || session.processing || legacyPending
   // Auto commit salt + deal when ready
   const autoRef = useRef(false)
   useEffect(() => {
@@ -365,7 +366,6 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
     }
   }, [session.active, isSeated, status, playerCount, saltsCommitted, txBusy])
 
-  const txBusy = actionPending || session.processing || legacyPending
 
   // Bet helpers
   const potF = parseFloat(formatEther(pot))
@@ -397,7 +397,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
       <div style={st.strip}>
         <span style={{...st.dot,background:isConnected?'#7ECFB3':'#E07070'}} />
         <span style={st.dim}>{isConnected?'Connected':'Disconnected'}</span>
-        {isConnected && <span style={st.balVal}>Wallet: {balLoading?'…':walletBalance} INIT</span>}
+        {isConnected && <span style={st.balVal}>Wallet: {balLoading?'ï¿½':walletBalance} INIT</span>}
         {isSeated && <span style={{color:'#E8DCC8',fontWeight:600}}>Stack: {formatEther(myStake)} INIT</span>}
         {isMyTurn && <span style={{color:'#7ECFB3',fontWeight:700,fontSize:'12px'}}>? YOUR TURN ({turnTimer}s)</span>}
       </div>
@@ -410,8 +410,8 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
       {winner && status === 7 && (
         <div style={st.winnerBanner}>
           ?? {isMe(winner.addr) ? 'YOU WON!' : truncAddr(winner.addr) + ' wins'}
-          {winner.handRank > 0 && ` — ${handRankName(winner.handRank)}`}
-          {pot > 0n && ` — ${formatEther(pot)} INIT`}
+          {winner.handRank > 0 && ` ï¿½ ${handRankName(winner.handRank)}`}
+          {pot > 0n && ` ï¿½ ${formatEther(pot)} INIT`}
         </div>
       )}
 
@@ -423,7 +423,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
           {/* Pot */}
           <div style={st.potArea}>
             <div style={st.potLabel}>POT</div>
-            <div style={st.potValue}>{pot ? formatEther(pot) : '—'}</div>
+            <div style={st.potValue}>{pot ? formatEther(pot) : 'ï¿½'}</div>
             {currentBet > 0n && <div style={{fontSize:'10px',color:'#555'}}>Bet: {formatEther(currentBet)} INIT</div>}
           </div>
 
@@ -431,7 +431,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
           <div style={st.communityArea}>
             {community.length > 0
               ? community.map((c,i) => <Card key={i} encoded={c} />)
-              : <span style={{color:'#333',fontSize:'11px',fontStyle:'italic'}}>{status>=2?'Waiting for cards…':'No cards'}</span>}
+              : <span style={{color:'#333',fontSize:'11px',fontStyle:'italic'}}>{status>=2?'Waiting for cardsï¿½':'No cards'}</span>}
           </div>
 
           {/* Hole cards (YOUR cards) */}
@@ -567,7 +567,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
             <button onClick={session.emergencyRecover} style={st.btnRecover}>Recover Funds</button>
           )}
 
-          {txBusy && <span style={{color:'#E8DCC8',fontSize:'11px',fontWeight:600}}>Processing…</span>}
+          {txBusy && <span style={{color:'#E8DCC8',fontSize:'11px',fontWeight:600}}>Processingï¿½</span>}
         </div>
       )}
 
@@ -579,7 +579,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
 
       <footer style={st.footer}>
         <span style={{color:'#2a2a2a'}}>INIPoker</span>
-        <span style={{color:'#1C1C1C'}}>Session Wallet · Band VRF · Commit-Reveal</span>
+        <span style={{color:'#1C1C1C'}}>Session Wallet ï¿½ Band VRF ï¿½ Commit-Reveal</span>
       </footer>
     </div>
   )
