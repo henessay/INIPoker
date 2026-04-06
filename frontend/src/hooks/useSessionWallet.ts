@@ -125,6 +125,7 @@ export function useSessionWallet() {
   }, [initClients])
 
   const sWrite = useCallback(async (fn: string, args: unknown[], value?: bigint): Promise<string> => {
+    console.log("[SESSION] sWrite called:", fn, args, value?.toString())
     const wc = wcRef.current; const pc = pcRef.current
     if (!wc || !pc) throw new Error('Session not initialized')
     const hash = await wc.writeContract({
@@ -140,6 +141,9 @@ export function useSessionWallet() {
   const depositAndJoin = useCallback(async (tableId: bigint, buyInWei: bigint): Promise<boolean> => {
     up({ processing: true, error: null })
     try {
+      console.log("[SESSION] depositAndJoin start, tableId:", tableId.toString(), "buyIn:", buyInWei.toString())
+      console.log("[SESSION] session address:", wcRef.current?.account?.address)
+      console.log("[SESSION] RPC_URL:", RPC_URL)
       await new Promise(r => setTimeout(r, 2500))
       up({ status: 'Depositing INIT into game contract...' })
       await sWrite('deposit', [], buyInWei)
@@ -255,3 +259,5 @@ export function useSessionWallet() {
     commitSalt, requestDeal, revealCards, evaluateShowdown,
   }
 }
+
+
