@@ -34,7 +34,7 @@ const SUIT_COLORS = ['#ccc','#E07070','#7EAECF','#7ECFB3'] as const
 const VALUES = ['','A','2','3','4','5','6','7','8','9','10','J','Q','K'] as const
 
 // 6-max circular seat positions (percentage of felt container)
-const SEAT_POS = [
+const SEAT_POSITIONS = [
   { top:'2%',  left:'50%' },  // 0: top center
   { top:'22%', left:'88%' },  // 1: right top
   { top:'68%', left:'85%' },  // 2: right bottom
@@ -42,6 +42,12 @@ const SEAT_POS = [
   { top:'68%', left:'15%' },  // 4: left bottom
   { top:'22%', left:'12%' },  // 5: left top
 ]
+// Rotate seats so mySeat is always at bottom (index 3)
+function getRotatedPos(seatIdx: number, mySeat: number, total: number): {top:string,left:string} {
+  const offset = (3 - mySeat + total) % total
+  const visualIdx = (seatIdx + offset) % total
+  return SEAT_POSITIONS[visualIdx] || SEAT_POSITIONS[0]
+}
 
 const TURN_TIMEOUT = 60 // seconds
 
@@ -260,6 +266,20 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   const error = localError || session.error
 
   // -- Hole card reconstruction from deckSeed --
+  // Inject card animation keyframes
+  useEffect(() => {
+    const id = 'inipoker-anims'
+    if (!document.getElementById(id)) {
+      const style = document.createElement('style')
+      style.id = id
+      style.textContent = `
+        @keyframes dealCards { from { opacity:0; transform:translateX(-50%) translateY(-30px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+        @keyframes dealCommunity { from { opacity:0; transform:scale(0.5); } to { opacity:1; transform:scale(1); } }
+      `
+      document.head.appendChild(style)
+    }
+  }, [])
+
   useEffect(() => {
     if (!deckSeed || deckSeed === '0x0000000000000000000000000000000000000000000000000000000000000000') {
       setHoleCards(null); return
@@ -444,10 +464,10 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
 
           {/* CIRCULAR SEATS */}
           <div style={st.seatsContainer}>
-            {SEAT_POS.slice(0, Math.max(playerCount, 2) || 6).map((pos, seatIdx) => {
+            {Array.from({length: Math.max(playerCount, 2) || 6}, (_, seatIdx) => seatIdx).map((seatIdx) => {
               const player = allPlayers.find(p => p.seatIndex === seatIdx)
               if (!player) return (
-                <div key={seatIdx} style={{...st.seatWrap,...pos,transform:'translate(-50%,-50%)'}}>
+                <div key={seatIdx} style={{...st.seatWrap,...getRotatedPos(seatIdx, mySeatIndex, Math.max(playerCount, 2) || 6),transform:'translate(-50%,-50%)'}}>
                   <div style={st.emptySeat}>{seatIdx}</div>
                 </div>
               )
@@ -458,7 +478,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
               const isBB = (dealerIndex + 2) % playerCount === seatIdx
 
               return (
-                <div key={seatIdx} style={{...st.seatWrap,...pos,transform:'translate(-50%,-50%)'}}>
+                <div key={seatIdx} style={{...st.seatWrap,...getRotatedPos(seatIdx, mySeatIndex, Math.max(playerCount, 2) || 6),transform:'translate(-50%,-50%)'}}>
                   <div style={{...st.seatBox, ...(me?st.seatMe:{}), ...(isTurn?st.seatTurn:{}), ...(!player.isActive?{opacity:0.4}:{})}}>
                     {/* Markers */}
                     <div style={{display:'flex',gap:'3px',position:'absolute',top:'-10px',left:'50%',transform:'translateX(-50%)'}}>
@@ -617,13 +637,13 @@ const st: Record<string,React.CSSProperties> = {
   potLabel:{fontSize:'8px',color:'#555',letterSpacing:'3px',textTransform:'uppercase' as const},
   potValue:{fontSize:'22px',fontWeight:700,color:'#E8DCC8',fontFamily:'"DM Mono",monospace'},
 
-  communityArea:{display:'flex',gap:'6px',justifyContent:'center',padding:'8px 0',zIndex:2},
+  communityArea:{display:'flex',gap:'6px',justifyContent:'center',padding:'8px 0',zIndex:2,animation:'dealCommunity 0.4s ease-out'},
   card:{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'40px',height:'56px',borderRadius:'5px',background:'#fafaf8',fontWeight:700,fontSize:'13px',boxShadow:'0 2px 6px rgba(0,0,0,0.5)'},
   cardLg:{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'52px',height:'72px',borderRadius:'6px',background:'#fafaf8',fontWeight:700,fontSize:'17px',boxShadow:'0 3px 10px rgba(0,0,0,0.6)'},
   cardBack:{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'40px',height:'56px',borderRadius:'5px',background:'#111',color:'#333',fontSize:'18px',fontWeight:700,border:'1px solid #1C1C1C'},
   cardBackLg:{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'52px',height:'72px',borderRadius:'6px',background:'#111',color:'#333',fontSize:'22px',fontWeight:700,border:'1px solid #1C1C1C'},
 
-  holeArea:{display:'flex',gap:'6px',zIndex:2,padding:'4px 12px',background:'rgba(0,0,0,0.6)',borderRadius:'8px',border:'1px solid rgba(232,220,200,0.2)'},
+  holeArea:{display:'flex',gap:'6px',zIndex:10,padding:'4px 12px',background:'rgba(0,0,0,0.6)',borderRadius:'8px',border:'1px solid rgba(232,220,200,0.2)',position:'absolute' as const,bottom:'12%',left:'50%',transform:'translateX(-50%)',animation:'dealCards 0.5s ease-out'},
 
   seatsContainer:{position:'absolute' as const,top:0,left:0,right:0,bottom:0},
   seatWrap:{position:'absolute' as const,zIndex:1},
@@ -654,6 +674,7 @@ const st: Record<string,React.CSSProperties> = {
   overlay:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,backdropFilter:'blur(4px)'},
   modal:{background:'#0A0A0A',border:'1px solid #1C1C1C',borderRadius:'12px',padding:'22px',width:'380px',maxWidth:'92vw',fontFamily:'"DM Sans",sans-serif'},
 }
+
 
 
 
