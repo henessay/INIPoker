@@ -334,14 +334,21 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
   const handleSitDown = async (buyIn: number) => {
     setLocalError(null)
     try {
-      const sessionAddr = await session.createSession(address!)
       const buyInWei = parseEther(buyIn.toString())
-      const gasReserveWei = parseEther(SESSION_GAS_RESERVE)
-      await sendTransactionAsync({ to: sessionAddr as `0x${string}`, value: buyInWei + gasReserveWei, gas: 100_000n, gasPrice: 1_000_000_000n })
-      addLog(`Funding session wallet...`)
-      const ok = await session.depositAndJoin(tableId, buyInWei)
-      if (ok) { setBuyInOpen(false); addLog(`Seated with ${buyIn} INIT`); refreshAll() }
-    } catch (err: any) { setLocalError(err.shortMessage ?? err.message) }
+      setBuyInOpen(false)
+      setLocalStatus("Joining table...")
+      await writeContractAsync({
+        address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI,
+        functionName: "joinTable", args: [tableId, buyInWei],
+        gas: 500_000n, gasPrice: 1_000_000_000n,
+      })
+      addLog(`Seated with ${buyIn} INIT`)
+      setLocalStatus(null)
+      refreshAll()
+    } catch (err: any) {
+      setLocalError(err.shortMessage ?? err.message)
+      setLocalStatus(null)
+    }
   }
 
   const handleLeave = async () => {
