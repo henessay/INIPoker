@@ -1,4 +1,4 @@
-/**
+﻿/**
  * PokerTable.tsx ? Full poker UI with all 10 features
  *
  * 1. Hole cards (Fisher-Yates reconstruction from deckSeed)
@@ -29,7 +29,7 @@ import { useSessionWallet, fisherYatesShuffle, getHoleCardsFromDeck } from '../h
 const STATUS_LABELS = ['Waiting','Dealing','Pre-Flop','Flop','Turn','River','Showdown','Settled'] as const
 const ACTION_LABELS = ['','Fold','Check','Bet','Call','Raise','All-In'] as const
 const HAND_RANKS = ['High Card','One Pair','Two Pair','Three of a Kind','Straight','Flush','Full House','Four of a Kind','Straight Flush','Royal Flush'] as const
-const SUITS = ['?','?','?','?'] as const
+const SUITS = ['\u2660','\u2665','\u2666','\u2663'] as const
 const SUIT_COLORS = ['#ccc','#E07070','#7EAECF','#7ECFB3'] as const
 const VALUES = ['','A','2','3','4','5','6','7','8','9','10','J','Q','K'] as const
 
@@ -96,7 +96,7 @@ function BuyInModal({ bigBlind, gameBalance, onConfirm, onClose, isProcessing, s
         </div>
         {isProcessing ? (
           <div style={{textAlign:'center',padding:'24px 0'}}>
-            <div style={{fontSize:'13px',color:'#E8DCC8',marginBottom:'8px'}}>? {sessionStatus||'Processing...'}</div>
+            <div style={{fontSize:'13px',color:'#E8DCC8',marginBottom:'8px'}}>⏳ {sessionStatus||'Processing...'}</div>
             <div style={{fontSize:'11px',color:'#555'}}>Do not close this window</div>
           </div>
         ) : (<>
@@ -112,7 +112,7 @@ function BuyInModal({ bigBlind, gameBalance, onConfirm, onClose, isProcessing, s
           </div>
           <div style={{textAlign:'center',margin:'10px 0'}}>
             <div style={{fontSize:'28px',fontWeight:700,color:'#fff',fontFamily:'"DM Mono",monospace'}}>{val.toFixed(1)}</div>
-            <div style={{fontSize:'11px',color:'#555'}}>INIT ? {Math.round(val/bigBlind)} bb</div>
+            <div style={{fontSize:'11px',color:'#555'}}>INIT {'\u00B7'} {Math.round(val/bigBlind)} bb</div>
           </div>
           <div style={{padding:'0 4px',margin:'14px 0'}}>
             <input type="range" min={minBuy} max={effMax>minBuy?effMax:minBuy+bigBlind} step={bigBlind} value={val}
@@ -384,7 +384,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
           <span style={{color:'#E8DCC8',fontSize:'14px'}}>?</span>
           <h1 style={st.title}>{tableName}</h1>
           <span style={st.badge}>{STATUS_LABELS[status]}</span>
-          {session.active && <span style={st.sessionBadge}>? Session</span>}
+          {session.active && <span style={st.sessionBadge}>{'\u25CF'} Session</span>}
         </div>
         <div style={st.headerRight}>
           {isConnected && <button onClick={()=>setCashierOpen(true)} style={st.btnCashier}>Cashier</button>}
@@ -399,7 +399,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
         <span style={st.dim}>{isConnected?'Connected':'Disconnected'}</span>
         {isConnected && <span style={st.balVal}>Wallet: {balLoading?'?':walletBalance} INIT</span>}
         {isSeated && <span style={{color:'#E8DCC8',fontWeight:600}}>Stack: {formatEther(myStake)} INIT</span>}
-        {isMyTurn && <span style={{color:'#7ECFB3',fontWeight:700,fontSize:'12px'}}>? YOUR TURN ({turnTimer}s)</span>}
+        {isMyTurn && <span style={{color:'#7ECFB3',fontWeight:700,fontSize:'12px'}}>{'\u26A1'} YOUR TURN ({turnTimer}s)</span>}
       </div>
 
       {/* MESSAGES */}
@@ -487,7 +487,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
                       </div>
                     )}
                     {/* Turn indicator */}
-                    {isTurn && <div style={{fontSize:'8px',color:'#7ECFB3',fontWeight:700,marginTop:'2px'}}>? TURN</div>}
+                    {isTurn && <div style={{fontSize:'8px',color:'#7ECFB3',fontWeight:700,marginTop:'2px'}}>{'\u23CE'} TURN</div>}
                   </div>
                 </div>
               )
@@ -540,7 +540,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
             <button onClick={handleAllIn} style={st.btnAllIn} disabled={txBusy}>All-In</button>
             {/* Bet helpers */}
             <div style={{display:'flex',gap:'4px'}}>
-              <button onClick={()=>setBetHelper(potF*0.5)} style={st.btnHelper}>? Pot</button>
+              <button onClick={()=>setBetHelper(potF*0.5)} style={st.btnHelper}>{'\u00BD'} Pot</button>
               <button onClick={()=>setBetHelper(potF)} style={st.btnHelper}>Pot</button>
               <button onClick={()=>setBetHelper(potF*2)} style={st.btnHelper}>2? Pot</button>
             </div>
@@ -654,6 +654,9 @@ const st: Record<string,React.CSSProperties> = {
   overlay:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,backdropFilter:'blur(4px)'},
   modal:{background:'#0A0A0A',border:'1px solid #1C1C1C',borderRadius:'12px',padding:'22px',width:'380px',maxWidth:'92vw',fontFamily:'"DM Sans",sans-serif'},
 }
+
+
+
 
 
 
