@@ -92,11 +92,11 @@ function BuyInModal({ bigBlind, gameBalance, onConfirm, onClose, isProcessing, s
       <div style={st.modal} onClick={e => e.stopPropagation()}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}}>
           <span style={{fontSize:'16px',fontWeight:600,color:'#fff'}}>Take a Seat</span>
-          {!isProcessing && <button onClick={onClose} style={{background:'none',border:'none',color:'#555',fontSize:'18px',cursor:'pointer'}}>?</button>}
+          {!isProcessing && <button onClick={onClose} style={{background:'none',border:'none',color:'#555',fontSize:'18px',cursor:'pointer'}}>{'\u2715'}</button>}
         </div>
         {isProcessing ? (
           <div style={{textAlign:'center',padding:'24px 0'}}>
-            <div style={{fontSize:'13px',color:'#E8DCC8',marginBottom:'8px'}}>⏳ {sessionStatus||'Processing...'}</div>
+            <div style={{fontSize:'13px',color:'#E8DCC8',marginBottom:'8px'}}>{'\u23F3'} {sessionStatus||'Processing...'}</div>
             <div style={{fontSize:'11px',color:'#555'}}>Do not close this window</div>
           </div>
         ) : (<>
@@ -381,7 +381,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
       <header style={st.header}>
         <div style={st.brand}>
           {onBack && <button onClick={onBack} style={st.btnBack}>{'\u2190'} Back</button>}
-          <span style={{color:'#E8DCC8',fontSize:'14px'}}>?</span>
+          <span style={{color:'#E8DCC8',fontSize:'14px'}}>{'\u25C6'}</span>
           <h1 style={st.title}>{tableName}</h1>
           <span style={st.badge}>{STATUS_LABELS[status]}</span>
           {session.active && <span style={st.sessionBadge}>{'\u25CF'} Session</span>}
@@ -397,7 +397,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
       <div style={st.strip}>
         <span style={{...st.dot,background:isConnected?'#7ECFB3':'#E07070'}} />
         <span style={st.dim}>{isConnected?'Connected':'Disconnected'}</span>
-        {isConnected && <span style={st.balVal}>Wallet: {balLoading?'?':walletBalance} INIT</span>}
+        {isConnected && <span style={st.balVal}>Wallet: {balLoading?'...':walletBalance} INIT</span>}
         {isSeated && <span style={{color:'#E8DCC8',fontWeight:600}}>Stack: {formatEther(myStake)} INIT</span>}
         {isMyTurn && <span style={{color:'#7ECFB3',fontWeight:700,fontSize:'12px'}}>{'\u26A1'} YOUR TURN ({turnTimer}s)</span>}
       </div>
@@ -411,7 +411,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
         <div style={st.winnerBanner}>
           ?? {isMe(winner.addr) ? 'YOU WON!' : truncAddr(winner.addr) + ' wins'}
           {winner.handRank > 0 && ` ? ${handRankName(winner.handRank)}`}
-          {pot > 0n && ` ? ${formatEther(pot)} INIT`}
+          {pot > 0n && ` - \ INIT`}
         </div>
       )}
 
@@ -423,7 +423,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
           {/* Pot */}
           <div style={st.potArea}>
             <div style={st.potLabel}>POT</div>
-            <div style={st.potValue}>{pot ? formatEther(pot) : '?'}</div>
+            <div style={st.potValue}>{pot ? formatEther(pot) : '\u2014'}</div>
             {currentBet > 0n && <div style={{fontSize:'10px',color:'#555'}}>Bet: {formatEther(currentBet)} INIT</div>}
           </div>
 
@@ -542,7 +542,7 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
             <div style={{display:'flex',gap:'4px'}}>
               <button onClick={()=>setBetHelper(potF*0.5)} style={st.btnHelper}>{'\u00BD'} Pot</button>
               <button onClick={()=>setBetHelper(potF)} style={st.btnHelper}>Pot</button>
-              <button onClick={()=>setBetHelper(potF*2)} style={st.btnHelper}>2? Pot</button>
+              <button onClick={()=>setBetHelper(potF*2)} style={st.btnHelper}>2x Pot</button>
             </div>
           </>)}
 
@@ -654,6 +654,7 @@ const st: Record<string,React.CSSProperties> = {
   overlay:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,backdropFilter:'blur(4px)'},
   modal:{background:'#0A0A0A',border:'1px solid #1C1C1C',borderRadius:'12px',padding:'22px',width:'380px',maxWidth:'92vw',fontFamily:'"DM Sans",sans-serif'},
 }
+
 
 
 
