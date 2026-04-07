@@ -1,4 +1,4 @@
-/**
+﻿/**
  * PokerTable.tsx — Full poker UI v2
  *
  * Changes from v1:
@@ -375,45 +375,54 @@ export default function PokerTable({ tableId = 0n, bigBlind = 0.2, tableName = '
     await doAction("revealHoleCards", [tableId, salt as `0x${string}`], "Cards revealed")
   }
   const handleEvaluate = () => doAction("evaluateShowdown", [tableId], "Showdown evaluated")
-
-  // ── Auto-actions ──
+  // Auto-actions - locked by last processed status to prevent loops
+  const lastAutoStatusRef = useRef<string>("")
   useEffect(() => {
-    if (autoActionRef.current || txBusy || !isSeated || !isConnected) return
+    if (autoActionRef.current || txBusy || !isSeated) return
+    const stateKey = `${status}-${saltsCommitted}-${playerCount}`
+    if (lastAutoStatusRef.current === stateKey) return
 
     // Auto commit when waiting with 2+ players
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted < playerCount) {
       const existing = sessionStorage.getItem(`inipoker_salt_${tableId}`)
       if (!existing) {
+        lastAutoStatusRef.current = stateKey
         autoActionRef.current = true
-        handleCommit().then(() => { autoActionRef.current = false; setTimeout(refreshAll, 2000) })
+        handleCommit().finally(() => { setTimeout(() => { autoActionRef.current = false; refreshAll() }, 3000) })
+        return
       }
     }
     // Auto deal
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount) {
+      lastAutoStatusRef.current = stateKey
       autoActionRef.current = true
-      handleDeal().then(() => { autoActionRef.current = false; setTimeout(refreshAll, 2000) })
+      handleDeal().finally(() => { setTimeout(() => { autoActionRef.current = false; refreshAll() }, 3000) })
+      return
     }
     // Auto reveal
     if (status === 6 && isSeated) {
       const myP = allPlayers.find(p => p.addr.toLowerCase() === address?.toLowerCase())
       if (myP && !myP.hasRevealed) {
+        lastAutoStatusRef.current = stateKey + "-reveal"
         autoActionRef.current = true
-        handleReveal().then(() => { autoActionRef.current = false; setTimeout(refreshAll, 2000) })
+        handleReveal().finally(() => { setTimeout(() => { autoActionRef.current = false; refreshAll() }, 3000) })
+        return
       }
     }
     // Auto evaluate
     if (status === 6) {
       const active = allPlayers.filter(p => p.isActive)
       if (active.length > 0 && active.every(p => p.hasRevealed)) {
+        lastAutoStatusRef.current = stateKey + "-eval"
         autoActionRef.current = true
-        handleEvaluate().then(() => { autoActionRef.current = false; setTimeout(refreshAll, 2000) })
+        handleEvaluate().finally(() => { setTimeout(() => { autoActionRef.current = false; refreshAll() }, 3000) })
+        return
       }
     }
     // Clear salt for next hand
     if (status === 7 && prevStatusRef.current !== 7) sessionStorage.removeItem(`inipoker_salt_${tableId}`)
     prevStatusRef.current = status
-  }, [status, playerCount, saltsCommitted, isSeated, isConnected, txBusy, allPlayers])
-
+  }, [status, playerCount, saltsCommitted, isSeated, txBusy])
   const potF = parseFloat(formatEther(pot))
   const setBetHelper = (x: number) => setBetAmount(Math.max(parseFloat(formatEther(currentBet)) + 0.01, x).toFixed(2))
   const timerPct = isMyTurn ? (turnTimer / TURN_TIMEOUT) * 100 : 0
