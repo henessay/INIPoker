@@ -16,7 +16,7 @@ interface Tournament { id: number; name: string; type: GameType; buyIn: number; 
 
 // ── TEST TABLES (tiny blinds for easy testing) ──
 const TEST_TABLES: Table[] = [
-  { id: 0, name: 'Test Micro 01', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0, featured: true },
+  { id: 13, name: 'Test Micro 01', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0, featured: true },
   { id: 1, name: 'Test Micro 02', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0 },
 ]
 
@@ -450,5 +450,6 @@ const s: Record<string, React.CSSProperties> = {
 
   bottom: { display:'flex', alignItems:'center', gap:'20px', padding:'8px 20px', borderTop:'1px solid #111', fontSize:'10px', color:'#2a2a2a' },
 }
+
 
 
