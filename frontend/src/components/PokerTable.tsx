@@ -26,7 +26,7 @@ import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
 import { useAccount, useReadContract, useReadContracts, useSendTransaction } from 'wagmi'
 import { POKER_GAME_ADDRESS, POKER_GAME_ABI } from '../config/contract'
 import { useWalletBalance } from '../hooks/useWalletBalance'
-import { CashierModal } from './CashierModal'
+import CashierModal from './CashierModal'
 
 // ════════════════════════════════════════════════════════════
 // CHAIN & RPC CONFIG
