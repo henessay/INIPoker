@@ -1,4 +1,4 @@
-﻿/**
+/**
  * PokerTable.tsx - v5
  *
  * Changes vs v4:
@@ -26,14 +26,19 @@ import CashierModal from './CashierModal'
 
 // ════════════════════════════════════════════════════════════
 // CHAIN & RPC CONFIG
+// IMPORTANT: session wallet writes go DIRECT to VPS via Caddy HTTPS endpoint,
+// not through the Vercel proxy.  The Vercel proxy parses bodies as JSON which
+// corrupts raw `eth_sendRawTransaction` payloads.  The Caddy endpoint supports
+// CORS from our Vercel origin.
 // ════════════════════════════════════════════════════════════
-const RPC_URL = 'https://ini-poker.vercel.app/api/rpc'
+const RPC_URL_READ  = 'https://ini-poker.vercel.app/api/rpc'     // used by wagmi reads
+const RPC_URL_WRITE = 'https://inipoker.duckdns.org/rpc'         // used by session wallet writes
 const CHAIN_ID = 2649570508581093
 const INIPOKER_CHAIN = {
   id: CHAIN_ID,
   name: 'INIPoker L2',
   nativeCurrency: { name: 'INIT', symbol: 'INIT', decimals: 18 },
-  rpcUrls: { default: { http: [RPC_URL] }, public: { http: [RPC_URL] } },
+  rpcUrls: { default: { http: [RPC_URL_WRITE] }, public: { http: [RPC_URL_WRITE] } },
 } as const
 
 const GAS_RESERVE_WEI = parseEther('0.3')
@@ -295,13 +300,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const sessionAddr = sessionAccount?.address ?? null
 
   const publicClient = useMemo<PublicClient>(() => createPublicClient({
-    chain: INIPOKER_CHAIN as any, transport: http(RPC_URL),
+    chain: INIPOKER_CHAIN as any, transport: http(RPC_URL_WRITE),
   }), [])
 
   const sWrite = useCallback(async (fnName: string, args: unknown[], value?: bigint, gasHint = 600_000n): Promise<string> => {
     if (!sessionAccount) throw new Error('Session wallet not set up - click Sit Down first')
     const wc = createWalletClient({
-      account: sessionAccount, chain: INIPOKER_CHAIN as any, transport: http(RPC_URL),
+      account: sessionAccount, chain: INIPOKER_CHAIN as any, transport: http(RPC_URL_WRITE),
     })
     console.log(`[SESSION] ${fnName}`, args, value?.toString())
     const hash = await wc.writeContract({
@@ -324,19 +329,20 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayers', args: [tableId],
     query: { refetchInterval: 2000 }
   })
+
   const fs = fullSession as readonly any[] | undefined
-  const status = fs ? Number(fs[5]) : 0
-  const dealerIndex = fs ? Number(fs[6]) : 0
-  const activePlayerIdx = fs ? Number(fs[7]) : 0
-  const rawPlayerCount = fs ? Number(fs[8]) : 0
+  const status = fs ? Number(fs[1]) : 0
+  const dealerIndex = fs ? Number(fs[2]) : 0
+  const rawPlayerCount = fs ? Number(fs[3]) : 0
+  const communityCount = fs ? Number(fs[4]) : 0
+  const community = ((fs && fs[5]) ? Array.from(fs[5] as any) : [0, 0, 0, 0, 0]) as number[]
   const pot = fs ? (fs[9] as bigint) : 0n
   const currentBet = fs ? (fs[10] as bigint) : 0n
-  const smallBlind = fs ? (fs[11] as bigint) : 0n
-  const bigBlindWei = fs ? (fs[12] as bigint) : parseEther(bigBlind.toString())
-  const deckSeed = fs ? (fs[15] as `0x${string}`) : ('0x0' as `0x${string}`)
-  const community = ((fs && fs[18]) ? Array.from(fs[18] as any) : [0, 0, 0, 0, 0]) as number[]
-  const communityCount = fs ? Number(fs[19]) : 0
-  const saltsCommitted = fs ? Number(fs[20]) : 0
+  const deckSeed = fs ? (fs[14] as `0x${string}`) : '0x0' as `0x${string}`
+  const activePlayerIdx = fs ? Number(fs[15]) : 0
+  const smallBlind = fs ? (fs[16] as bigint) : 0n
+  const bigBlindWei = fs ? (fs[17] as bigint) : parseEther(bigBlind.toString())
+  const saltsCommitted = fs ? Number(fs[19]) : 0
 
   const playerAddrs = (players as readonly `0x${string}`[] | undefined) ?? []
   const playerStateContracts = playerAddrs.map(addr => ({
@@ -634,7 +640,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       }
 
       const sessClient = createWalletClient({
-        account, chain: INIPOKER_CHAIN as any, transport: http(RPC_URL),
+        account, chain: INIPOKER_CHAIN as any, transport: http(RPC_URL_WRITE),
       })
 
       // Step 5: check game balance (maybe session wallet already has chips deposited)
@@ -706,7 +712,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       if (sessBal > gasNeeded && address) {
         const toReturn = sessBal - gasNeeded
         const wc = createWalletClient({
-          account: sessionAccount, chain: INIPOKER_CHAIN as any, transport: http(RPC_URL),
+          account: sessionAccount, chain: INIPOKER_CHAIN as any, transport: http(RPC_URL_WRITE),
         })
         await wc.sendTransaction({
           account: sessionAccount,
@@ -863,6 +869,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         </div>
       )}
 
+      <div style={st.body}>
+      <div style={st.mainCol}>
       <div style={st.tableArea}>
         <div style={st.tableFelt}>
           {/* POT */}
@@ -1077,6 +1085,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           {txBusy && <span style={{ color: '#E8DCC8', fontSize: '11px', fontWeight: 600, marginLeft: 'auto' }}>Processing...</span>}
         </div>
       </div>
+      </div>{/* /mainCol */}
 
       <div style={st.logPanel}>
         <div style={st.logTitle}>ACTION LOG</div>
@@ -1090,6 +1099,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           {sessionAddr && <div>Session: {sessionAddr.slice(0, 6)}...{sessionAddr.slice(-4)}</div>}
         </div>
       </div>
+      </div>{/* /body */}
 
       {buyInOpen && <BuyInModal bigBlind={bigBlind} gameBalance={gameBalance} walletBalance={walletBalance}
         onConfirm={handleSitDown} onClose={() => setBuyInOpen(false)}
@@ -1107,8 +1117,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 }
 
 const st = {
-  root: { display: 'grid' as const, gridTemplateColumns: '1fr 280px', gridTemplateRows: 'auto auto 1fr auto auto', minHeight: '100vh', background: '#0a0a0a', color: '#E8DCC8', fontFamily: '"DM Mono",monospace' },
-  header: { gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 24px', background: '#0F0F0F', borderBottom: '1px solid #1C1C1C' },
+  root: { display: 'flex', flexDirection: 'column' as const, minHeight: '100vh', background: '#0a0a0a', color: '#E8DCC8', fontFamily: '"DM Mono",monospace' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 24px', background: '#0F0F0F', borderBottom: '1px solid #1C1C1C', flexShrink: 0 },
   brand: { display: 'flex', alignItems: 'center', gap: '12px' },
   btnBack: { background: 'none', border: '1px solid #2A2A2A', color: '#888', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit' },
   title: { fontSize: '15px', fontWeight: 700, color: '#E8DCC8', margin: 0 },
@@ -1117,11 +1127,13 @@ const st = {
   headerRight: { display: 'flex', alignItems: 'center', gap: '12px' },
   btnCashier: { background: 'rgba(126,207,179,0.1)', border: '1px solid rgba(126,207,179,0.3)', color: '#7ECFB3', padding: '6px 14px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
   addr: { fontSize: '10px', color: '#666' },
-  statusBar: { gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '16px', padding: '6px 24px', background: '#0a0a0a', borderBottom: '1px solid #1C1C1C', fontSize: '11px' },
+  statusBar: { display: 'flex', alignItems: 'center', gap: '16px', padding: '6px 24px', background: '#0a0a0a', borderBottom: '1px solid #1C1C1C', fontSize: '11px', flexShrink: 0 },
   balVal: { color: '#888' },
-  banner: { gridColumn: '1 / -1', padding: '8px 24px', background: 'rgba(126,207,179,0.08)', borderBottom: '1px solid rgba(126,207,179,0.15)', color: '#7ECFB3', fontSize: '11px', animation: 'fadeIn 0.3s ease-out' },
-  errBanner: { gridColumn: '1 / -1', padding: '8px 24px', background: 'rgba(224,112,112,0.08)', borderBottom: '1px solid rgba(224,112,112,0.15)', color: '#E07070', fontSize: '11px' },
-  tableArea: { gridColumn: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', position: 'relative' as const },
+  banner: { padding: '8px 24px', background: 'rgba(126,207,179,0.08)', borderBottom: '1px solid rgba(126,207,179,0.15)', color: '#7ECFB3', fontSize: '11px', animation: 'fadeIn 0.3s ease-out', flexShrink: 0 },
+  errBanner: { padding: '8px 24px', background: 'rgba(224,112,112,0.08)', borderBottom: '1px solid rgba(224,112,112,0.15)', color: '#E07070', fontSize: '11px', flexShrink: 0 },
+  body: { flex: 1, display: 'flex', minHeight: 0 },
+  mainCol: { flex: 1, display: 'flex', flexDirection: 'column' as const, minWidth: 0 },
+  tableArea: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', position: 'relative' as const, overflow: 'hidden' },
   tableFelt: { position: 'relative' as const, width: '100%', maxWidth: '960px', height: '580px', background: 'radial-gradient(ellipse at center, #0f2e1e 0%, #071712 55%, #030705 100%)', borderRadius: '50%/30%', border: '5px solid #2a4632', boxShadow: 'inset 0 0 80px rgba(0,0,0,0.75), 0 0 50px rgba(0,0,0,0.6)' },
   potArea: { position: 'absolute' as const, top: '48%', left: '50%', transform: 'translate(-50%,-50%)', textAlign: 'center' as const, zIndex: 2 },
   potLabel: { fontSize: '8px', color: '#555', letterSpacing: '3px', textTransform: 'uppercase' as const, fontWeight: 600 },
@@ -1154,7 +1166,7 @@ const st = {
   cardBack: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '24px', height: '32px', background: 'linear-gradient(135deg,#1a2e22,#0d1f17)', borderRadius: '3px', border: '1px solid #2a3e32', color: '#444', fontSize: '11px' },
   cardBackSm: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '20px', height: '28px', background: 'linear-gradient(135deg,#1a2e22,#0d1f17)', borderRadius: '3px', border: '1px solid #2a3e32', color: '#2a3e32', fontSize: '9px' },
   cardBackLg: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '52px', height: '70px', background: 'linear-gradient(135deg,#1a2e22,#0d1f17)', borderRadius: '7px', border: '1px solid #2a3e32', color: '#444', fontSize: '14px' },
-  actionBar: { gridColumn: 1, padding: '12px 24px', background: '#0F0F0F', borderTop: '1px solid #1C1C1C' },
+  actionBar: { padding: '12px 24px', background: '#0F0F0F', borderTop: '1px solid #1C1C1C', flexShrink: 0 },
   actionRow: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' as const },
   btnPrimary: { background: '#7ECFB3', color: '#0a0a0a', border: 'none', padding: '8px 16px', borderRadius: '4px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
   btnAction: { background: 'rgba(126,207,179,0.1)', border: '1px solid rgba(126,207,179,0.3)', color: '#7ECFB3', padding: '8px 14px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
@@ -1164,12 +1176,12 @@ const st = {
   btnLeave: { background: 'rgba(224,112,112,0.1)', border: '1px solid rgba(224,112,112,0.3)', color: '#E07070', padding: '8px 14px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
   btnHelper: { background: 'transparent', border: '1px solid #2A2A2A', color: '#888', padding: '4px 8px', borderRadius: '3px', fontSize: '9px', cursor: 'pointer', fontFamily: 'inherit' },
   betInput: { background: '#0a0a0a', border: '1px solid #2A2A2A', color: '#E8DCC8', padding: '8px 12px', borderRadius: '4px', fontSize: '11px', width: '100px', fontFamily: 'inherit' },
-  logPanel: { gridColumn: 2, gridRow: '3 / 5', display: 'flex', flexDirection: 'column' as const, background: '#0F0F0F', borderLeft: '1px solid #1C1C1C', overflow: 'hidden' },
+  logPanel: { width: '280px', display: 'flex', flexDirection: 'column' as const, background: '#0F0F0F', borderLeft: '1px solid #1C1C1C', overflow: 'hidden', flexShrink: 0 },
   logTitle: { padding: '12px 16px', fontSize: '10px', color: '#555', letterSpacing: '2px', fontWeight: 600, textTransform: 'uppercase' as const, borderBottom: '1px solid #1C1C1C' },
   logBody: { flex: 1, overflowY: 'auto' as const, padding: '8px 16px' },
   logLine: { fontSize: '10px', color: '#888', marginBottom: '4px', fontFamily: '"DM Mono",monospace' },
   logFooter: { padding: '12px 16px', fontSize: '9px', color: '#444', borderTop: '1px solid #1C1C1C', lineHeight: 1.6 },
-  footer: { gridColumn: '1 / -1', padding: '8px 24px', background: '#0a0a0a', borderTop: '1px solid #1C1C1C', display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#444' },
+  footer: { padding: '8px 24px', background: '#0a0a0a', borderTop: '1px solid #1C1C1C', display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#444', flexShrink: 0 },
   overlay: { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 },
   modal: { background: '#0F0F0F', border: '1px solid #1C1C1C', borderRadius: '8px', padding: '20px', maxWidth: '380px', width: '90%' },
   modalTitle: { fontSize: '15px', fontWeight: 700, color: '#E8DCC8', margin: 0 },
