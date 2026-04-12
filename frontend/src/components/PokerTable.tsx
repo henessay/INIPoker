@@ -1,4 +1,4 @@
-/**
+﻿/**
  * PokerTable.tsx - v5
  *
  * Changes vs v4:
@@ -324,20 +324,19 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayers', args: [tableId],
     query: { refetchInterval: 2000 }
   })
-
   const fs = fullSession as readonly any[] | undefined
-  const status = fs ? Number(fs[1]) : 0
-  const dealerIndex = fs ? Number(fs[2]) : 0
-  const rawPlayerCount = fs ? Number(fs[3]) : 0
-  const communityCount = fs ? Number(fs[4]) : 0
-  const community = ((fs && fs[5]) ? Array.from(fs[5] as any) : [0, 0, 0, 0, 0]) as number[]
+  const status = fs ? Number(fs[5]) : 0
+  const dealerIndex = fs ? Number(fs[6]) : 0
+  const activePlayerIdx = fs ? Number(fs[7]) : 0
+  const rawPlayerCount = fs ? Number(fs[8]) : 0
   const pot = fs ? (fs[9] as bigint) : 0n
   const currentBet = fs ? (fs[10] as bigint) : 0n
-  const deckSeed = fs ? (fs[14] as `0x${string}`) : '0x0' as `0x${string}`
-  const activePlayerIdx = fs ? Number(fs[15]) : 0
-  const smallBlind = fs ? (fs[16] as bigint) : 0n
-  const bigBlindWei = fs ? (fs[17] as bigint) : parseEther(bigBlind.toString())
-  const saltsCommitted = fs ? Number(fs[19]) : 0
+  const smallBlind = fs ? (fs[11] as bigint) : 0n
+  const bigBlindWei = fs ? (fs[12] as bigint) : parseEther(bigBlind.toString())
+  const deckSeed = fs ? (fs[15] as `0x${string}`) : ('0x0' as `0x${string}`)
+  const community = ((fs && fs[18]) ? Array.from(fs[18] as any) : [0, 0, 0, 0, 0]) as number[]
+  const communityCount = fs ? Number(fs[19]) : 0
+  const saltsCommitted = fs ? Number(fs[20]) : 0
 
   const playerAddrs = (players as readonly `0x${string}`[] | undefined) ?? []
   const playerStateContracts = playerAddrs.map(addr => ({
