@@ -359,7 +359,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const dealerIndex = fs ? Number(fs[2]) : 0
   const playerCount = fs ? Number(fs[3]) : 0
   const communityCount = fs ? Number(fs[4]) : 0
-  const community = (fs && fs[5] ? fs[5] as readonly number[] : [0, 0, 0, 0, 0]) as readonly number[]
+  const community = ((fs && fs[5]) ? Array.from(fs[5] as any) : [0, 0, 0, 0, 0]) as number[]
   const pot = fs ? (fs[9] as bigint) : 0n
   const currentBet = fs ? (fs[10] as bigint) : 0n
   const deckSeed = fs ? (fs[14] as `0x${string}`) : '0x0' as `0x${string}`
@@ -892,7 +892,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           {/* COMMUNITY CARDS above pot */}
           {communityCount > 0 && (
             <div style={st.communityArea}>
-              {community.slice(0, communityCount).map((c, i) => (
+              {Array.from(community).slice(0, communityCount).map((c, i) => (
                 <div key={`c${i}-${c}`} style={{ animation: `commSlide 0.55s cubic-bezier(.25,.9,.3,1.2) ${i * 0.2}s both` }}>
                   <Card encoded={c} size="large" flipDelay={i * 0.2} />
                 </div>
