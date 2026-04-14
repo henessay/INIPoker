@@ -32,7 +32,7 @@ import CashierModal from './CashierModal'
 // CORS from our Vercel origin.
 // ════════════════════════════════════════════════════════════
 const RPC_URL_READ  = 'https://ini-poker.vercel.app/api/rpc'     // used by wagmi reads
-const RPC_URL_WRITE = 'https://inipoker.duckdns.org/rpc'         // used by session wallet writes
+const RPC_URL_WRITE = 'https://ini-poker.vercel.app/api/rpc'         // used by session wallet writes
 const CHAIN_ID = 2649570508581093
 const INIPOKER_CHAIN = {
   id: CHAIN_ID,
