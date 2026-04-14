@@ -330,19 +330,24 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     query: { refetchInterval: 2000 }
   })
 
+  const { data: communityData } = useReadContract({
+    address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getCommunityCards', args: [tableId],
+    query: { refetchInterval: 2000 }
+  })
+
   const fs = fullSession as readonly any[] | undefined
-  const status = fs ? Number(fs[1]) : 0
-  const dealerIndex = fs ? Number(fs[2]) : 0
-  const rawPlayerCount = fs ? Number(fs[3]) : 0
-  const communityCount = fs ? Number(fs[4]) : 0
-  const community = ((fs && fs[5]) ? Array.from(fs[5] as any) : [0, 0, 0, 0, 0]) as number[]
+  const status = fs ? Number(fs[5]) : 0
+  const dealerIndex = fs ? Number(fs[6]) : 0
+  const activePlayerIdx = fs ? Number(fs[7]) : 0
+  const rawPlayerCount = fs ? Number(fs[8]) : 0
   const pot = fs ? (fs[9] as bigint) : 0n
   const currentBet = fs ? (fs[10] as bigint) : 0n
-  const deckSeed = fs ? (fs[14] as `0x${string}`) : '0x0' as `0x${string}`
-  const activePlayerIdx = fs ? Number(fs[15]) : 0
-  const smallBlind = fs ? (fs[16] as bigint) : 0n
-  const bigBlindWei = fs ? (fs[17] as bigint) : parseEther(bigBlind.toString())
+  const smallBlind = fs ? (fs[11] as bigint) : 0n
+  const bigBlindWei = fs ? (fs[12] as bigint) : parseEther(bigBlind.toString())
+  const deckSeed = fs ? (fs[15] as `0x${string}`) : '0x0' as `0x${string}`
+  const communityCount = fs ? Number(fs[18]) : 0
   const saltsCommitted = fs ? Number(fs[19]) : 0
+  const community = (communityData ? Array.from(communityData as any) : [0, 0, 0, 0, 0]) as number[]
 
   const playerAddrs = (players as readonly `0x${string}`[] | undefined) ?? []
   const playerStateContracts = playerAddrs.map(addr => ({
@@ -359,12 +364,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       addr, stake: r ? (r[0] as bigint) : 0n,
       chips: r ? (r[0] as bigint) : 0n,
       currentBet: r ? (r[1] as bigint) : 0n,
-      isActive: r ? Boolean(r[2]) : false,
-      lastAction: r ? Number(r[3]) : 0,
-      handRank: r ? Number(r[4]) : 0,
-      revealedCard0: r ? Number(r[7]) : 0,
-      revealedCard1: r ? Number(r[8]) : 0,
+      lastAction: r ? Number(r[2]) : 0,
+      isActive: r ? Boolean(r[3]) : false,
       hasRevealed: r ? Boolean(r[6]) : false,
+      handRank: r ? Number(r[7]) : 0,
+      revealedCard0: 0,
+      revealedCard1: 0,
       seatIndex: i,
     }
   })
