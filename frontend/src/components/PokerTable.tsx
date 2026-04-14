@@ -317,8 +317,19 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       ...(value !== undefined ? { value } : {}),
     } as any)
     console.log(`[SESSION] ${fnName} hash:`, hash)
+    // Wait for receipt so caller knows whether tx actually succeeded
+    try {
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 20_000 })
+      if (receipt.status !== 'success') {
+        throw new Error(`${fnName} reverted (hash ${hash.slice(0, 10)})`)
+      }
+      console.log(`[SESSION] ${fnName} mined in block ${receipt.blockNumber}`)
+    } catch (e) {
+      console.error(`[SESSION] ${fnName} receipt error`, e)
+      throw e
+    }
     return hash
-  }, [sessionAccount])
+  }, [sessionAccount, publicClient])
 
   // ═══ Contract reads ═══
   const { data: fullSession, refetch: refetchSession } = useReadContract({
@@ -745,7 +756,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   // ═══ AUTO GAME LOOP ═══
   const autoBusyRef = useRef(false)
-  const lastAutoKeyRef = useRef<string>('')
+  const lastAutoKeyRef = useRef<string | null>('')
   const prevStatusRef = useRef<number>(0)
 
   useEffect(() => {
@@ -762,36 +773,42 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     const stateKey = `${status}-${saltsCommitted}-${communityCount}-${activeCount}-${myPlayer?.hasRevealed ? 'r' : 'n'}`
     if (lastAutoKeyRef.current === stateKey) return
 
+    // Helper: run an auto action; on failure, clear the key after a delay so we retry
+    const runAuto = (fn: () => Promise<unknown>, retryDelay = 4000) => {
+      lastAutoKeyRef.current = stateKey
+      autoBusyRef.current = true
+      fn()
+        .then(() => {
+          setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500)
+        })
+        .catch(err => {
+          console.warn('[AUTO] action failed, will retry', err)
+          setTimeout(() => {
+            autoBusyRef.current = false
+            lastAutoKeyRef.current = null  // allow retry on same state
+            refreshAll()
+          }, retryDelay)
+        })
+    }
+
     // Commit salt
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted < playerCount) {
       const myHash = sessionStorage.getItem(saltKey)
       if (!myHash) {
-        lastAutoKeyRef.current = stateKey
-        autoBusyRef.current = true
-        handleCommit().finally(() => {
-          setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500)
-        })
+        runAuto(handleCommit)
         return
       }
     }
     // Deal
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount) {
-      lastAutoKeyRef.current = stateKey
-      autoBusyRef.current = true
-      handleDeal().finally(() => {
-        setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 3000)
-      })
+      runAuto(handleDeal)
       return
     }
     // Reveal
     if (status === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
       const salt = sessionStorage.getItem(saltKey)
       if (salt) {
-        lastAutoKeyRef.current = stateKey
-        autoBusyRef.current = true
-        handleReveal().finally(() => {
-          setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500)
-        })
+        runAuto(handleReveal)
         return
       }
     }
@@ -799,11 +816,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (status === 6) {
       const active = allPlayers.filter(p => p.isActive)
       if (active.length >= 2 && active.every(p => p.hasRevealed)) {
-        lastAutoKeyRef.current = stateKey
-        autoBusyRef.current = true
-        handleEvaluate().finally(() => {
-          setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500)
-        })
+        runAuto(handleEvaluate)
         return
       }
     }
@@ -1076,14 +1089,20 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           )}
 
           {(status === 0 || status === 7) && isSeated && playerCount >= 2 && (
-            <span style={{ color: '#7ECFB3', fontSize: '12px' }}>
+            <span style={{ color: '#7ECFB3', fontSize: '12px', display: 'flex', gap: 8, alignItems: 'center' }}>
               {saltsCommitted < playerCount ? `\u23F3 Auto-committing (${saltsCommitted}/${playerCount})` : '\u23F3 Dealing...'}
+              {saltsCommitted < playerCount
+                ? <button onClick={handleCommit} disabled={actionPending} style={st.btnHelper}>Retry commit</button>
+                : <button onClick={handleDeal} disabled={actionPending} style={st.btnHelper}>Retry deal</button>}
             </span>
           )}
 
           {status === 6 && isSeated && (
-            <span style={{ color: '#7ECFB3', fontSize: '12px' }}>
+            <span style={{ color: '#7ECFB3', fontSize: '12px', display: 'flex', gap: 8, alignItems: 'center' }}>
               {!myPlayer?.hasRevealed ? '\u23F3 Revealing...' : '\u23F3 Evaluating...'}
+              {!myPlayer?.hasRevealed
+                ? <button onClick={handleReveal} disabled={actionPending} style={st.btnHelper}>Retry reveal</button>
+                : <button onClick={handleEvaluate} disabled={actionPending} style={st.btnHelper}>Retry evaluate</button>}
             </span>
           )}
 
