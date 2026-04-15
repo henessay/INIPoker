@@ -1,0 +1,24 @@
+{
+  "name": "@ggpoker/event-indexer",
+  "version": "1.0.0",
+  "description": "Event-driven indexer replacing Go p2p layer — subscribes to PokerGame.sol events via WebSocket",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

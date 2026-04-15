@@ -1,0 +1,18 @@
+{
+  "challenger": {
+    "version": "0.1.0",
+    "chain_id": "ggpoker-minitia-1",
+    "l1_chain_id": "initia-1",
+    "key_type": "secp256k1",
+    "address": "init1challenger_placeholder_replace_with_real_key",
+    "pubkey": "<GENERATED_AT_LAUNCH>",
+    "generated": false,
+    "note": "Run `weave opinit init challenger --generate-key-file` with network access to populate real keys"
+  },
+  "config": {
+    "l1_rpc": "https://rpc.initia.tech",
+    "l2_rpc": "http://localhost:26657",
+    "challenge_period": "604800s",
+    "bridge_id": "<ASSIGNED_AFTER_REGISTRATION>"
+  }
+}

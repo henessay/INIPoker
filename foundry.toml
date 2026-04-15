@@ -1,0 +1,50 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Foundry Configuration — GGPoker on Minitia L2 (MiniEVM)
+#  Target chain: ggpoker-minitia-1 | EVM chain ID: 42069
+# ═══════════════════════════════════════════════════════════════════════════
+
+[profile.default]
+# Compilation
+src              = "contracts"
+out              = "out"
+libs             = ["lib"]
+test             = "contracts/test"
+script           = "script"
+solc_version     = "0.8.20"
+optimizer        = true
+optimizer_runs   = 200
+evm_version      = "paris"
+via_ir           = false
+
+# Import remappings
+# forge-std is installed via: forge install foundry-rs/forge-std --no-commit
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "@interfaces/=contracts/interfaces/",
+    "@libraries/=contracts/libraries/",
+    "@src/=contracts/src/",
+]
+
+# Gas reporting
+gas_reports = ["PokerGame", "MockBandVRFProvider"]
+
+# Formatter
+[profile.default.fmt]
+line_length = 120
+tab_width   = 4
+bracket_spacing = true
+
+# Fuzz testing
+[profile.default.fuzz]
+runs    = 256
+seed    = "0xdeadbeef"
+
+# ── RPC Endpoints ──
+# Loaded from .env via ${VAR} interpolation
+[rpc_endpoints]
+minitia_local   = "http://localhost:8545"
+minitia_testnet = "${MINITIA_TESTNET_RPC}"
+
+# ── Etherscan (block explorer verification) ──
+[etherscan]
+minitia_local = { key = "", url = "http://localhost:8545/api" }

@@ -1,0 +1,92 @@
+# ============================================================================
+#  Minitia L2 Rollup Configuration — ggpoker Engine
+#  Runtime: MiniEVM (EVM-compatible execution layer on Initia)
+#  Generated for: weave rollup launch
+# ============================================================================
+
+version: "1"
+
+# --- L2 Chain Identity ---
+chain_id: "ggpoker-minitia-1"
+chain_name: "GGPoker Minitia L2"
+
+# --- Runtime Selection ---
+# Options: evm | move | wasm
+runtime: evm
+
+# --- Gas Token Configuration ---
+gas_token:
+  denom: "GAS"
+  display_denom: "GAS"
+  decimals: 18
+  # Initial supply minted to genesis accounts
+  initial_supply: "1000000000000000000000000"  # 1,000,000 GAS
+
+# --- Genesis Accounts ---
+# Accounts pre-funded at chain genesis for development & deployment
+genesis_accounts:
+  # Local developer deployer account
+  - address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+    # Hardhat default account #1 — replace with your key
+    balance: "500000000000000000000000"   # 500,000 GAS
+    label: "deployer"
+
+  # Game treasury / pot escrow
+  - address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+    balance: "200000000000000000000000"   # 200,000 GAS
+    label: "game_treasury"
+
+  # Faucet for player onboarding
+  - address: "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+    balance: "300000000000000000000000"   # 300,000 GAS
+    label: "faucet"
+
+# --- Sequencer Configuration ---
+sequencer:
+  # For local dev, single sequencer is sufficient
+  type: "single"
+  batch_submission_interval: "5s"
+  max_batch_size: 1000
+
+# --- L1 Bridge Configuration (Initia L1 ↔ Minitia L2) ---
+bridge:
+  # OPinit bridge module settings
+  submission_interval: "1h"
+  finalization_period: "604800s"  # 7 days for mainnet, override for devnet
+  # For local devnet, reduce to:
+  # finalization_period: "60s"
+  oracle_enabled: true
+
+# --- EVM-Specific Configuration ---
+evm:
+  # EVM chain ID (distinct from Cosmos chain_id)
+  chain_id: 42069
+  # Block gas limit
+  block_gas_limit: 30000000
+  # Base fee (EIP-1559)
+  min_base_fee: "1000000000"    # 1 gwei
+  # Enable London fork features
+  london_fork: true
+
+# --- API Endpoints ---
+api:
+  enable: true
+  address: "0.0.0.0"
+  # REST API (Cosmos LCD)
+  rest_port: 1317
+  # Tendermint RPC
+  rpc_port: 26657
+  # EVM JSON-RPC (MetaMask / ethers.js / Hardhat)
+  jsonrpc_port: 8545
+  # WebSocket
+  ws_port: 8546
+  # gRPC
+  grpc_port: 9090
+
+# --- Pruning ---
+pruning:
+  strategy: "nothing"  # keep all state for devnet
+
+# --- Logging ---
+log_level: "info"
+log_format: "json"

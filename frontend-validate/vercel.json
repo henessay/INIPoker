@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/lcd/:path*", "destination": "http://204.168.233.1:1317/:path*" },
+    { "source": "/((?!api/|lcd/).*)", "destination": "/index.html" }
+  ]
+}
