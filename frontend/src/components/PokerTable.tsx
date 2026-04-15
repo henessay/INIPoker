@@ -373,6 +373,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   })
 
   const fs = fullSession as readonly any[] | undefined
+  const handId = fs ? Number(fs[1]) : 0
   const status = fs ? Number(fs[5]) : 0
   const dealerIndex = fs ? Number(fs[6]) : 0
   const activePlayerIdx = fs ? Number(fs[7]) : 0
@@ -428,26 +429,26 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   // My player — priority is session wallet
   const myPlayer = allPlayers.find(p => p.addr.toLowerCase() === sessionAddr?.toLowerCase())
-  const isSeated = !!myPlayer && myPlayer.isActive
-  const isSeatedAsZombie = !!myPlayer && !myPlayer.isActive  // folded/dead at table but still in seatMap
+  const isAtTable = !!myPlayer
+  const isActiveInHand = !!myPlayer?.isActive
   const myStake = myPlayer?.chips ?? 0n
   const myBet = myPlayer?.currentBet ?? 0n
   const mySeatIndex = myPlayer?.seatIndex ?? 0
   const activePlayers = allPlayers.filter(p => p.isActive)
   const activeTurnPlayer = allPlayersRaw.find(p => p.seatIndex === activePlayerIdx)
-  const isMyTurn = status >= 2 && status <= 5 && isSeated &&
+  const isMyTurn = status >= 2 && status <= 5 && isActiveInHand &&
     activeTurnPlayer?.addr?.toLowerCase() === (sessionAddr?.toLowerCase() ?? '__nope__')
 
   // Hole cards
   const [holeCards, setHoleCards] = useState<[number, number] | null>(null)
   useEffect(() => {
-    if (status >= 2 && status <= 7 && isSeated && deckSeed && deckSeed !== '0x0') {
+    if (status >= 2 && status <= 7 && isAtTable && deckSeed && deckSeed !== '0x0') {
       const cards = getHoleCardsFromDeck(deckSeed, dealerIndex, mySeatIndex, playerCount)
       setHoleCards(cards)
     } else if (status === 0 || status === 1) {
       setHoleCards(null)
     }
-  }, [deckSeed, dealerIndex, mySeatIndex, playerCount, status, isSeated])
+  }, [deckSeed, dealerIndex, mySeatIndex, playerCount, status, isAtTable])
 
   // ═══ Animations ═══
   useEffect(() => {
@@ -543,7 +544,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const handleRaise = () => { const a = betAmount; doAction('playerAction', [tableId, 5, parseEther(a || '0')], `You raised ${a} INIT`) }
   const handleAllIn = () => doAction('playerAction', [tableId, 6, 0n], 'You went ALL-IN!')
 
-  const saltKey = `inipoker_salt_${tableId.toString()}_${sessionAddr}`
+  const saltScopeHandId = status === 0 || status === 7 ? handId + 1 : handId
+  const saltKey = `inipoker_salt_${tableId.toString()}_${sessionAddr ?? 'no_session'}_${saltScopeHandId}`
   const handleCommit = useCallback(async () => {
     if (!sessionAccount) return
     setActionPending(true); setLocalError(null)
@@ -556,6 +558,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       addLog('Salt committed')
     } catch (err: any) {
       console.error('[COMMIT]', err)
+      sessionStorage.removeItem(saltKey)
       setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 140))
     }
     setActionPending(false)
@@ -759,15 +762,53 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   // ═══ LEAVE TABLE ═══
   const handleLeaveTable = async () => {
-    if (!sessionAccount) return
+    if (!sessionAccount || !sessionAddr) return
     setLeaving(true); setLocalError(null)
     try {
-      if (isSeated || isSeatedAsZombie) {
+      const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+      const readTableStatus = async () => {
+        const latestSession = await publicClient.readContract({
+          address: POKER_GAME_ADDRESS,
+          abi: POKER_GAME_ABI,
+          functionName: 'sessions',
+          args: [tableId],
+        }) as readonly any[]
+        return Number(latestSession[5] ?? 0)
+      }
+
+      if (isAtTable) {
+        let latestStatus = await readTableStatus()
+
+        if (latestStatus === 6) {
+          if (activePlayers.length === 1) {
+            setLocalStatus('Settling showdown...')
+            await sWrite('settleLastStanding', [tableId], undefined, 300_000n)
+          } else if (myPlayer?.isActive && !myPlayer.hasRevealed) {
+            const salt = sessionStorage.getItem(saltKey) as `0x${string}` | null
+            if (!salt) {
+              throw new Error('Cannot leave yet: your showdown reveal is still pending and the local salt is missing.')
+            }
+            setLocalStatus('Revealing cards...')
+            await sWrite('revealHoleCards', [tableId, salt])
+          } else if (activePlayers.length >= 2 && activePlayers.every(p => p.hasRevealed)) {
+            setLocalStatus('Resolving showdown...')
+            await sWrite('evaluateShowdown', [tableId], undefined, 800_000n)
+          }
+
+          for (let i = 0; i < 8; i++) {
+            await sleep(1500)
+            latestStatus = await readTableStatus()
+            if (latestStatus === 0 || latestStatus === 7) break
+          }
+        }
+
+        if (latestStatus !== 0 && latestStatus !== 7) {
+          throw new Error('Cannot leave yet: the current hand is still settling on-chain.')
+        }
+
         setLocalStatus('Leaving table...')
-        try {
-          await sWrite('leaveTable', [tableId])
-          await new Promise(r => setTimeout(r, 2500))
-        } catch (e) { console.warn('leaveTable:', e) }
+        await sWrite('leaveTable', [tableId])
+        await sleep(2500)
       }
 
       setLocalStatus('Withdrawing chips...')
@@ -788,17 +829,25 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         const wc = createWalletClient({
           account: sessionAccount, chain: INIPOKER_CHAIN as any, transport: http(RPC_URL_WRITE),
         })
-        await wc.sendTransaction({
+        const returnHash = await wc.sendTransaction({
           account: sessionAccount,
           chain: INIPOKER_CHAIN as any,
           to: address as `0x${string}`,
           value: toReturn,
           gas: 50_000n, gasPrice: 1_000_000_000n,
         })
+        await publicClient.waitForTransactionReceipt({ hash: returnHash, timeout: 20_000 })
       }
 
       sessionStorage.removeItem(sessionKey!)
-      sessionStorage.removeItem(saltKey)
+      const saltPrefix = `inipoker_salt_${tableId.toString()}_${sessionAddr}_`
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i)
+        if (key && key.startsWith(saltPrefix)) {
+          sessionStorage.removeItem(key)
+        }
+      }
+      sessionStorage.removeItem(`inipoker_salt_${tableId.toString()}_${sessionAddr}`)
       setSessionPk(null)
       setLocalStatus(null)
       addLog('Left table - funds returned')
@@ -815,20 +864,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   // ═══ AUTO GAME LOOP ═══
   const autoBusyRef = useRef(false)
   const lastAutoKeyRef = useRef<string | null>('')
-  const prevStatusRef = useRef<number>(0)
 
   useEffect(() => {
-    if (prevStatusRef.current === 7 && status === 0) {
-      sessionStorage.removeItem(saltKey)
-    }
-    prevStatusRef.current = status
-  }, [status, saltKey])
-
-  useEffect(() => {
-    if (!sessionAccount || !isSeated || autoBusyRef.current || txBusy) return
+    if (!sessionAccount || !isAtTable || autoBusyRef.current || txBusy) return
 
     const activeCount = activePlayers.length
-    const stateKey = `${status}-${saltsCommitted}-${communityCount}-${activeCount}-${myPlayer?.hasRevealed ? 'r' : 'n'}`
+    const stateKey = `${handId}-${status}-${saltsCommitted}-${communityCount}-${activeCount}-${myPlayer?.hasRevealed ? 'r' : 'n'}`
     if (lastAutoKeyRef.current === stateKey) return
 
     // Helper: run an auto action; on failure, clear the key after a delay so we retry
@@ -881,7 +922,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         return
       }
     }
-  }, [status, playerCount, saltsCommitted, isSeated, sessionAccount, txBusy,
+  }, [handId, status, playerCount, saltsCommitted, isAtTable, sessionAccount, txBusy,
       myPlayer?.hasRevealed, myPlayer?.isActive, communityCount,
       handleCommit, handleDeal, handleReveal, handleEvaluate, handleSettleLastStanding, refreshAll, saltKey, activePlayers, allPlayers.length])
 
@@ -913,7 +954,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   // Detect stuck table
   const isTableInHand = status >= 2 && status <= 6
-  const showStuckWarning = isTableInHand && !isSeated && !isSeatedAsZombie
+  const showStuckWarning = isTableInHand && !isAtTable
 
   // ═══ RENDER ═══
   return (
@@ -935,7 +976,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       <div style={st.statusBar}>
         {isConnected && <span style={st.balVal}>Wallet: {balLoading ? '...' : walletBalance} INIT</span>}
         {isConnected && <span style={st.balVal}>Game: {balLoading ? '...' : gameBalance} INIT</span>}
-        {isSeated && <span style={{ ...st.balVal, color: '#7ECFB3', fontWeight: 700 }}>Stack: {formatEther(myStake)} INIT</span>}
+        {isAtTable && <span style={{ ...st.balVal, color: '#7ECFB3', fontWeight: 700 }}>Stack: {formatEther(myStake)} INIT</span>}
         {isMyTurn && <span style={{ color: '#E8C07E', fontWeight: 700, fontSize: '12px', animation: 'pulseTurn 1.2s ease-in-out infinite' }}>{'\u26A1'} YOUR TURN ({Math.ceil(timeLeft)}s)</span>}
       </div>
 
@@ -949,12 +990,6 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           </button>
         </div>
       )}
-      {isSeatedAsZombie && !isTableInHand && (
-        <div style={{ ...st.banner, color: '#E07070' }}>
-          Your seat is folded/locked. Click Leave Table to free it.
-        </div>
-      )}
-
       <div style={st.body}>
       <div style={st.mainCol}>
       <div style={st.tableArea}>
@@ -1110,13 +1145,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       {/* ACTION BAR */}
       <div style={st.actionBar}>
         <div style={st.actionRow}>
-          {!isSeated && !isSeatedAsZombie && !sessionAccount && (
+          {!isAtTable && !sessionAccount && (
             <button onClick={() => setBuyInOpen(true)} style={st.btnPrimary} disabled={txBusy || !isConnected || showStuckWarning}>
               {sittingDown ? 'Setting up...' : '\u2659 Sit Down'}
             </button>
           )}
 
-          {!isSeated && !isSeatedAsZombie && sessionAccount && (
+          {!isAtTable && sessionAccount && (
             <>
               <button onClick={() => setBuyInOpen(true)} style={st.btnPrimary} disabled={txBusy || showStuckWarning}>
                 {sittingDown ? 'Setting up...' : '\u2659 Sit Down'}
@@ -1127,13 +1162,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
             </>
           )}
 
-          {(isSeated || isSeatedAsZombie) && (
+          {isAtTable && (
             <button onClick={handleLeaveTable} style={st.btnLeave} disabled={leaving || txBusy}>
               {leaving ? 'Leaving...' : 'Leave Table'}
             </button>
           )}
 
-          {status >= 2 && status <= 5 && isSeated && isMyTurn && (
+          {status >= 2 && status <= 5 && isActiveInHand && isMyTurn && (
             <>
               <button onClick={handleFold} style={st.btnFold} disabled={txBusy}>Fold</button>
               {currentBet === myBet
@@ -1152,11 +1187,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
             </>
           )}
 
-          {status >= 2 && status <= 5 && isSeated && !isMyTurn && (
+          {status >= 2 && status <= 5 && isActiveInHand && !isMyTurn && (
             <span style={{ color: '#888', fontSize: '12px' }}>Waiting for opponent...</span>
           )}
 
-          {(status === 0 || status === 7) && isSeated && playerCount >= 2 && (
+          {(status === 0 || status === 7) && isAtTable && playerCount >= 2 && (
             <span style={{ color: '#7ECFB3', fontSize: '12px', display: 'flex', gap: 8, alignItems: 'center' }}>
               {saltsCommitted < playerCount ? `\u23F3 Auto-committing (${saltsCommitted}/${playerCount})` : '\u23F3 Dealing...'}
               {saltsCommitted < playerCount
@@ -1165,16 +1200,16 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
             </span>
           )}
 
-          {status === 6 && isSeated && (
+          {status === 6 && isAtTable && (
             <span style={{ color: '#7ECFB3', fontSize: '12px', display: 'flex', gap: 8, alignItems: 'center' }}>
               {activePlayers.length === 1
                 ? '\u23F3 Settling last player...'
-                : !myPlayer?.hasRevealed
+                : myPlayer?.isActive && !myPlayer.hasRevealed
                   ? '\u23F3 Revealing...'
                   : '\u23F3 Evaluating...'}
               {activePlayers.length === 1
                 ? <button onClick={handleSettleLastStanding} disabled={actionPending} style={st.btnHelper}>Retry settle</button>
-                : !myPlayer?.hasRevealed
+                : myPlayer?.isActive && !myPlayer.hasRevealed
                   ? <button onClick={handleReveal} disabled={actionPending} style={st.btnHelper}>Retry reveal</button>
                   : <button onClick={handleEvaluate} disabled={actionPending} style={st.btnHelper}>Retry evaluate</button>}
             </span>
