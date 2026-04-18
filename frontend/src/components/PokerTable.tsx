@@ -348,6 +348,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const currentBet = fs ? (fs[10] as bigint) : 0n
   const smallBlind = fs ? (fs[11] as bigint) : 0n
   const bigBlindWei = fs ? (fs[12] as bigint) : parseEther(bigBlind.toString())
+  const vrfPending = fs ? Boolean(fs[13]) : false
   const deckSeed = fs ? (fs[15] as `0x${string}`) : ('0x0' as `0x${string}`)
   const communityCount = fs ? Number(fs[18]) : 0
   const saltsCommitted = fs ? Number(fs[19]) : 0
@@ -887,6 +888,22 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
       refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, txBusy, lookupSalt])
 
+  // Track how long we've been stuck in Dealing (VRF callback pending).
+  // If longer than 20s, surface a clear UI warning.
+  const [vrfStale, setVrfStale] = useState(false)
+  const vrfEnteredAtRef = useRef<number>(0)
+  useEffect(() => {
+    if (status === 1 || vrfPending) {
+      if (vrfEnteredAtRef.current === 0) vrfEnteredAtRef.current = Date.now()
+      const interval = setInterval(() => {
+        if (Date.now() - vrfEnteredAtRef.current > 20_000) setVrfStale(true)
+      }, 1000)
+      return () => clearInterval(interval)
+    }
+    vrfEnteredAtRef.current = 0
+    if (vrfStale) setVrfStale(false)
+  }, [status, vrfPending, vrfStale])
+
   const [timeLeft, setTimeLeft] = useState(45)
   const turnStartRef = useRef<number>(0)
   useEffect(() => {
@@ -945,12 +962,18 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
                 </div>
                 {pot > 0n && <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'center', animation: 'stackGlow 2s ease-in-out infinite' }}><ChipStack amountWei={pot} size="large" /></div>}
                 {currentBet > 0n && <div style={{ fontSize: '10px', color: '#888', marginTop: '4px' }}>Current bet: {formatEther(currentBet)} INIT</div>}
-                {status === 1 && <div style={st.potHint}>Dealing...</div>}
+                {status === 1 && !vrfStale && <div style={st.potHint}>Dealing... waiting for randomness</div>}
+                {status === 1 && vrfStale && (
+                  <div style={{ ...st.potHint, color: '#E07070' }}>
+                    VRF callback stuck. Randomness provider did not respond.<br/>
+                    <span style={{ fontSize: '10px', color: '#E8C07E' }}>The mock VRF may be misconfigured (autoFulfill=false) or vrfProvider address doesn't match.</span>
+                  </div>
+                )}
                 {status === 0 && playerCount < 2 && <div style={st.potHint}>Waiting for players... ({playerCount}/2)</div>}
                 {(status === 0 || status === 7) && playerCount >= 2 && <div style={{ ...st.potHint, color: '#7ECFB3' }}>{saltsCommitted < playerCount ? `Auto-committing salts (${saltsCommitted}/${playerCount})...` : 'Starting next hand...'}</div>}
               </div>
 
-              {communityCount > 0 && (
+              {communityCount > 0 && status >= 3 && status <= 7 && playerCount >= 1 && (
                 <div style={st.communityArea}>
                   {community.slice(0, communityCount).map((c, i) => (
                     <div key={`c${i}-${c}`} style={{ animation: `commSlide 0.55s cubic-bezier(.25,.9,.3,1.2) ${i * 0.2}s both` }}>
@@ -960,7 +983,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
                 </div>
               )}
 
-              {holeCards && (
+              {holeCards && status >= 2 && status <= 6 && isSeated && (
                 <div style={st.holeArea}>
                   <div style={{ animation: 'dealIn 0.55s cubic-bezier(.25,.9,.3,1.2) 0s both' }}><Card encoded={holeCards[0]} size="large" /></div>
                   <div style={{ animation: 'dealIn 0.55s cubic-bezier(.25,.9,.3,1.2) 0.15s both' }}><Card encoded={holeCards[1]} size="large" /></div>

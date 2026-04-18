@@ -569,6 +569,26 @@ contract PokerGame is IVRFConsumer {
             balances[player] += cashOut;
         }
 
+        // If the last seat just freed, wipe per-hand board state so the empty
+        // table starts fresh (no stale community cards, pot, or deck seed).
+        if (s.playerCount == 0) {
+            s.status = PokerLib.GameStatus.Waiting;
+            s.dealerIndex = 0;
+            s.activePlayerIndex = 0;
+            s.pot = 0;
+            s.currentBet = 0;
+            s.deckCursor = 0;
+            s.communityCount = 0;
+            s.deckSeed = bytes32(0);
+            s.deckCommitment = bytes32(0);
+            s.saltsCommitted = 0;
+            s.saltsRevealed = 0;
+            s.vrfPending = false;
+            s.vrfRequestBlock = 0;
+            s.lastActionBlock = 0;
+            for (uint8 i = 0; i < 5; i++) { s.community[i] = 0; }
+        }
+
         emit PlayerLeft(tableId, player, cashOut);
     }
 
