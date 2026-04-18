@@ -961,22 +961,29 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
       refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, txBusy, lookupSalt])
 
-  // Watchdog: if on-chain state didn't progress in 8 seconds, force the
-  // auto-loop to try again. Protects against any unexpected swallow/stall.
+  // Watchdog: every 2s check if we've been stuck (autoBusyRef true) for >8s
+  // in the same on-chain state. If so, forcibly release the lock.
+  const watchdogStateRef = useRef<{ key: string; at: number }>({ key: '', at: 0 })
   useEffect(() => {
     if (!isSeated || !sessionAccount) return
-    if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current)
-    watchdogTimerRef.current = setTimeout(() => {
-      if (autoBusyRef.current) {
-        console.warn('[WATCHDOG] auto-loop has been busy 8s, releasing lock')
+    const interval = setInterval(() => {
+      const key = `${handId}-${status}-${saltsCommitted}-${communityCount}`
+      const now = Date.now()
+      if (watchdogStateRef.current.key !== key) {
+        watchdogStateRef.current = { key, at: now }
+        return
+      }
+      // Same state for how long?
+      const stuckMs = now - watchdogStateRef.current.at
+      if (autoBusyRef.current && stuckMs > 8000) {
+        console.warn('[WATCHDOG] busy 8s in state', key, '- releasing lock')
         autoBusyRef.current = false
         lastAutoKeyRef.current = null
         refreshAll()
+        watchdogStateRef.current.at = now  // reset so we don't fire every 2s
       }
-    }, 8000)
-    return () => {
-      if (watchdogTimerRef.current) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null }
-    }
+    }, 2000)
+    return () => clearInterval(interval)
   }, [handId, status, saltsCommitted, communityCount, isSeated, sessionAccount, refreshAll])
 
   // Track how long we've been stuck in Dealing (VRF callback pending).
