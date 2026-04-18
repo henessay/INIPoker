@@ -505,6 +505,17 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   // When a new hand starts (handId increments), wipe stale keys.
   useEffect(() => { cleanupOldSalts() }, [handId, cleanupOldSalts])
 
+  // Auto-loop state must be defined before handlers so they can reset it.
+  const autoBusyRef = useRef(false)
+  const lastAutoKeyRef = useRef<string | null>(null)
+  // When the session wallet / address / table changes (e.g. user left and
+  // came back with a new session), blow away the auto-loop lock so fresh
+  // actions can start immediately instead of being blocked by stale refs.
+  useEffect(() => {
+    autoBusyRef.current = false
+    lastAutoKeyRef.current = null
+  }, [sessionAddr, address, tableId])
+
   const doAction = useCallback(async (fnName: string, args: unknown[], label: string) => {
     setActionPending(true)
     setLocalError(null)
@@ -609,6 +620,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (!address || !sessionKey) return
     setLocalError(null)
     setSittingDown(true)
+    // Reset any stale auto-loop locks from a previous rejoin.
+    autoBusyRef.current = false
+    lastAutoKeyRef.current = null
     try {
       let pk = getStoredValue(sessionKey) as `0x${string}` | null
       if (!pk) {
@@ -730,6 +744,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (!sessionAccount || !address) return
     setLeaving(true)
     setLocalError(null)
+    // Reset auto-loop locks so future rejoins trigger auto-commit again.
+    autoBusyRef.current = false
+    lastAutoKeyRef.current = null
     try {
       let latestStatus = status
       if (latestStatus === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
@@ -816,8 +833,6 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     setTimeout(() => setLocalStatus(null), 1500)
   }, [isSeated, saltKeyPrefix, sessionKey])
 
-  const autoBusyRef = useRef(false)
-  const lastAutoKeyRef = useRef<string | null>(null)
   useEffect(() => {
     if (!sessionAccount || !address || !isSeated || !saltKeyPrefix || autoBusyRef.current || txBusy) return
 
@@ -875,23 +890,32 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       runAuto(handleDeal)
       return
     }
-    // Reveal: status==6 Showdown. Only reveal if we actually have any usable salt.
-    if (status === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
-      if (hasAnyUsableSalt) {
-        runAuto(handleReveal)
-        return
-      }
-      // No salt on this device — nothing to do; other seats may still reveal.
-    }
-    // Evaluate: when all active players have revealed
+    // SHOWDOWN PHASE (status===6)
+    // Handle last-man-standing FIRST — if only one active player remains
+    // (e.g. after a fold), the contract already switched status to Showdown
+    // but does NOT auto-settle. A folded seat cannot reveal, and the
+    // remaining active player has no incentive/obligation to reveal either.
+    // Trying `revealHoleCardsFor` here reverts (0x4f6184a8 from contract),
+    // which kept the auto-loop stuck retrying reveal and never calling
+    // evaluate/settle. Settle takes priority.
     if (status === 6) {
       const active = allPlayers.filter(p => p.isActive)
       if (active.length === 1) {
-        // Last one standing — contract has settleLastStanding for this, but evaluateShowdown
-        // also handles it. Kick evaluate.
-        runAuto(handleEvaluate)
+        runAuto(handleEvaluate)  // evaluateShowdown handles last-standing path internally
         return
       }
+    }
+    // Reveal: only when 2+ active remain and this seat hasn't revealed yet.
+    if (status === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
+      const activeNow = allPlayers.filter(p => p.isActive)
+      if (activeNow.length >= 2 && hasAnyUsableSalt) {
+        runAuto(handleReveal)
+        return
+      }
+    }
+    // Evaluate: when all 2+ active players have revealed
+    if (status === 6) {
+      const active = allPlayers.filter(p => p.isActive)
       if (active.length >= 2 && active.every(p => p.hasRevealed)) {
         runAuto(handleEvaluate)
         return
