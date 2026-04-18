@@ -869,6 +869,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (!sessionAccount || !isAtTable || autoBusyRef.current || txBusy) return
 
     const activeCount = activePlayers.length
+    // Count how many players at the table actually have chips (> 0).
+    // A "broke" player (chips==0) cannot participate in the next hand — don't start
+    // a new hand unless at least 2 players have chips.
+    const playersWithChips = allPlayers.filter(p => p.chips > 0n)
+    const enoughChippedPlayers = playersWithChips.length >= 2
+    const iHaveChips = myStake > 0n
+
     const stateKey = `${handId}-${status}-${saltsCommitted}-${communityCount}-${activeCount}-${myPlayer?.hasRevealed ? 'r' : 'n'}`
     if (lastAutoKeyRef.current === stateKey) return
 
@@ -890,16 +897,33 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         })
     }
 
-    // Commit salt
+    // Commit salt — only if I have chips AND >=2 players have chips
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted < playerCount) {
+      if (!enoughChippedPlayers || !iHaveChips) return  // skip: can't start a new hand
       const myHash = sessionStorage.getItem(saltKey)
       if (!myHash) {
-        runAuto(handleCommit)
+        // After a hand just ended (status=7), pause 5s so players can see the winner
+        const delay = status === 7 ? 5000 : 0
+        lastAutoKeyRef.current = stateKey
+        autoBusyRef.current = true
+        setTimeout(() => {
+          handleCommit()
+            .then(() => setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500))
+            .catch(err => {
+              console.warn('[AUTO] commit failed, retry', err)
+              setTimeout(() => {
+                autoBusyRef.current = false
+                lastAutoKeyRef.current = null
+                refreshAll()
+              }, 4000)
+            })
+        }, delay)
         return
       }
     }
-    // Deal
+    // Deal — only if enough chipped players
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount) {
+      if (!enoughChippedPlayers) return
       runAuto(handleDeal)
       return
     }
@@ -926,18 +950,27 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       myPlayer?.hasRevealed, myPlayer?.isActive, communityCount,
       handleCommit, handleDeal, handleReveal, handleEvaluate, handleSettleLastStanding, refreshAll, saltKey, activePlayers, allPlayers.length])
 
-  // ═══ Turn timer (VISUAL only — no auto-fold) ═══
+  // ═══ Turn timer with AUTO-FOLD ═══
   const [timeLeft, setTimeLeft] = useState(45)
   const turnStartRef = useRef<number>(0)
+  const autoFoldFiredRef = useRef<string>('')  // `${handId}-${status}-${activePlayerIdx}` once fired
   useEffect(() => {
     if (!isMyTurn) { setTimeLeft(45); turnStartRef.current = 0; return }
     if (turnStartRef.current === 0) turnStartRef.current = Date.now()
+    const turnKey = `${handId}-${status}-${activePlayerIdx}`
     const interval = setInterval(() => {
       const elapsed = (Date.now() - turnStartRef.current) / 1000
-      setTimeLeft(Math.max(0, 45 - elapsed))
+      const remaining = Math.max(0, 45 - elapsed)
+      setTimeLeft(remaining)
+      if (remaining <= 0 && autoFoldFiredRef.current !== turnKey && !txBusy && !actionPending) {
+        autoFoldFiredRef.current = turnKey
+        console.log('[AUTO-FOLD] timer expired, folding')
+        addLog('Timer expired - auto-fold')
+        handleFold()
+      }
     }, 250)
     return () => clearInterval(interval)
-  }, [isMyTurn])
+  }, [isMyTurn, handId, status, activePlayerIdx, txBusy, actionPending, addLog])
 
   const winnerAddrs = useMemo(() => {
     if (status !== 7) return new Set<string>()
@@ -948,6 +981,25 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     }
     return new Set(activePlayers.map(p => p.addr.toLowerCase()))
   }, [status, allPlayers, activePlayers])
+
+  // Winner banner: show for 5 seconds after each hand ends (status=7)
+  const [winnerBanner, setWinnerBanner] = useState<string | null>(null)
+  const bannerHandIdRef = useRef<number>(-1)
+  useEffect(() => {
+    if (status === 7 && bannerHandIdRef.current !== handId) {
+      bannerHandIdRef.current = handId
+      const winners = allPlayers.filter(p => winnerAddrs.has(p.addr.toLowerCase()))
+      if (winners.length > 0) {
+        const w = winners[0]
+        const shortAddr = `${w.addr.slice(0, 6)}\u2026${w.addr.slice(-4)}`
+        const handName = w.handRank ? rankLabel(w.handRank) : ''
+        setWinnerBanner(handName ? `${shortAddr} wins with ${handName}!` : `${shortAddr} wins the hand!`)
+        const t = setTimeout(() => setWinnerBanner(null), 5000)
+        return () => clearTimeout(t)
+      }
+    }
+    if (status !== 7) setWinnerBanner(null)
+  }, [status, handId, allPlayers, winnerAddrs])
 
   const potF = parseFloat(formatEther(pot))
   const setBetHelper = (amount: number) => setBetAmount(amount.toFixed(2))
@@ -981,6 +1033,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       </div>
 
       {(localStatus || sessionStatus) && <div style={st.banner}>{'\u23F3'} {localStatus || sessionStatus}</div>}
+      {winnerBanner && (
+        <div style={{ margin: '6px 24px', padding: '10px 16px', background: 'rgba(126,207,179,0.1)', border: '1px solid rgba(126,207,179,0.4)', borderRadius: '6px', color: '#7ECFB3', fontSize: '13px', fontWeight: 700, textAlign: 'center' }}>
+          ✨ {winnerBanner}
+        </div>
+      )}
       {localError && <div style={st.errBanner}>{localError}</div>}
       {showStuckWarning && (
         <div style={{ ...st.errBanner, background: 'rgba(232,192,126,0.08)', borderColor: 'rgba(232,192,126,0.3)', color: '#E8C07E' }}>
@@ -1192,26 +1249,18 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           )}
 
           {(status === 0 || status === 7) && isAtTable && playerCount >= 2 && (
-            <span style={{ color: '#7ECFB3', fontSize: '12px', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ color: '#7ECFB3', fontSize: '12px' }}>
               {saltsCommitted < playerCount ? `\u23F3 Auto-committing (${saltsCommitted}/${playerCount})` : '\u23F3 Dealing...'}
-              {saltsCommitted < playerCount
-                ? <button onClick={handleCommit} disabled={actionPending} style={st.btnHelper}>Retry commit</button>
-                : <button onClick={handleDeal} disabled={actionPending} style={st.btnHelper}>Retry deal</button>}
             </span>
           )}
 
           {status === 6 && isAtTable && (
-            <span style={{ color: '#7ECFB3', fontSize: '12px', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ color: '#7ECFB3', fontSize: '12px' }}>
               {activePlayers.length === 1
                 ? '\u23F3 Settling last player...'
                 : myPlayer?.isActive && !myPlayer.hasRevealed
                   ? '\u23F3 Revealing...'
                   : '\u23F3 Evaluating...'}
-              {activePlayers.length === 1
-                ? <button onClick={handleSettleLastStanding} disabled={actionPending} style={st.btnHelper}>Retry settle</button>
-                : myPlayer?.isActive && !myPlayer.hasRevealed
-                  ? <button onClick={handleReveal} disabled={actionPending} style={st.btnHelper}>Retry reveal</button>
-                  : <button onClick={handleEvaluate} disabled={actionPending} style={st.btnHelper}>Retry evaluate</button>}
             </span>
           )}
 
