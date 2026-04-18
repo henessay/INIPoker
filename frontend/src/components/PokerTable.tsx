@@ -492,14 +492,14 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   }, [saltKeyPrefix, expectedHandId, handId])
   // Remove salts for hands that are clearly behind us (> 2 hands old).
   const cleanupOldSalts = useCallback(() => {
-    if (!saltKeyPrefix || typeof sessionStorage === 'undefined') return
+    if (!saltKeyPrefix || typeof localStorage === 'undefined') return
     const keep = new Set([handId, handId + 1, handId - 1, expectedHandId])
-    for (let i = sessionStorage.length - 1; i >= 0; i--) {
-      const k = sessionStorage.key(i)
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i)
       if (!k || !k.startsWith(saltKeyPrefix)) continue
       const n = Number(k.slice(saltKeyPrefix.length))
       if (!Number.isFinite(n) || keep.has(n)) continue
-      try { sessionStorage.removeItem(k) } catch {}
+      try { localStorage.removeItem(k) } catch {}
     }
   }, [saltKeyPrefix, handId, expectedHandId])
   // When a new hand starts (handId increments), wipe stale keys.
@@ -541,17 +541,21 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (!sessionAccount || !address || !saltKey) return
     setActionPending(true)
     setLocalError(null)
+    const bytes = crypto.getRandomValues(new Uint8Array(32))
+    const hex = toHex(bytes)
+    const hash = keccak256(hex as `0x${string}`)
+    setStoredValue(saltKey, hex)
     try {
-      const bytes = crypto.getRandomValues(new Uint8Array(32))
-      const hex = toHex(bytes)
-      const hash = keccak256(hex as `0x${string}`)
-      setStoredValue(saltKey, hex)
       await sWrite('commitSaltFor', [tableId, address, hash])
       addLog('Salt committed')
     } catch (err: any) {
       const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
+      // If commit reverted for any reason, the salt we just stored is useless —
+      // remove it so next retry doesn't skip commit by mistake.
+      if (!/SaltAlreadyCommitted|Salt already/i.test(String(err?.message ?? err))) {
+        try { localStorage.removeItem(saltKey) } catch {}
+      }
       setLocalError(msg)
-      // Rethrow so the auto loop knows this step failed and will retry.
       throw err
     } finally {
       setActionPending(false)
@@ -803,10 +807,10 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         await sWrite('leaveTableFor', [tableId, address], undefined, 500_000n)
       }
       // Purge every salt we ever stored for this table+player (any handId)
-      if (saltKeyPrefix && typeof sessionStorage !== 'undefined') {
-        for (let i = sessionStorage.length - 1; i >= 0; i--) {
-          const k = sessionStorage.key(i)
-          if (k && k.startsWith(saltKeyPrefix)) { try { sessionStorage.removeItem(k) } catch {} }
+      if (saltKeyPrefix && typeof localStorage !== 'undefined') {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i)
+          if (k && k.startsWith(saltKeyPrefix)) { try { localStorage.removeItem(k) } catch {} }
         }
       }
       setLocalStatus(null)
@@ -822,10 +826,10 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const handleCloseSession = useCallback(() => {
     if (isSeated) return
     removeStoredValue(sessionKey)
-    if (saltKeyPrefix && typeof sessionStorage !== 'undefined') {
-      for (let i = sessionStorage.length - 1; i >= 0; i--) {
-        const k = sessionStorage.key(i)
-        if (k && k.startsWith(saltKeyPrefix)) { try { sessionStorage.removeItem(k) } catch {} }
+    if (saltKeyPrefix && typeof localStorage !== 'undefined') {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i)
+        if (k && k.startsWith(saltKeyPrefix)) { try { localStorage.removeItem(k) } catch {} }
       }
     }
     setSessionPk(null)
@@ -866,23 +870,36 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     // Commit: only if I have chips AND >=2 chipped players; salt goes under expectedHandId (handId+1).
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted < playerCount) {
       if (!enoughChippedPlayers || !iHaveChips) return
-      // If we already stored a salt for this upcoming hand, skip re-commit (contract will revert).
-      if (!getStoredValue(saltKey)) {
-        // Short pause after showdown so players can read the winner banner
-        const delay = status === 7 ? 5000 : 0
-        lastAutoKeyRef.current = stateKey
-        autoBusyRef.current = true
-        setTimeout(() => {
-          handleCommit()
-            .then(() => setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500))
-            .catch(() => setTimeout(() => {
+      // Even if a local salt exists, on-chain state might disagree (stale salt
+      // from an earlier contract deploy, a dropped tx, or a pre-leave session).
+      // We try to commit anyway — contract will revert with SaltAlreadyCommitted
+      // if it turns out we really did commit already, and the loop will move on.
+      const existingSalt = getStoredValue(saltKey)
+      if (!existingSalt) {
+        // No local salt — plain commit path.
+      }
+      // Short pause after showdown so players can read the winner banner
+      const delay = status === 7 ? 5000 : 0
+      lastAutoKeyRef.current = stateKey
+      autoBusyRef.current = true
+      setTimeout(() => {
+        handleCommit()
+          .then(() => setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500))
+          .catch((err: any) => {
+            const msg = String(err?.message ?? err)
+            // If it's SaltAlreadyCommitted, that's fine — clear local stale salt
+            // so next hand doesn't inherit it, but don't treat as error.
+            if (/SaltAlreadyCommitted|Salt already/i.test(msg)) {
+              console.log('[AUTO] salt already committed on-chain, moving on')
+            }
+            setTimeout(() => {
               autoBusyRef.current = false
               lastAutoKeyRef.current = null
               refreshAll()
-            }, 4000))
-        }, delay)
-        return
-      }
+            }, 4000)
+          })
+      }, delay)
+      return
     }
     // Deal: all salts in, fire requestDealFor
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount) {
