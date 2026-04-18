@@ -1,28 +1,21 @@
-/**
- * config/contract.ts — PokerGame.sol ABI + deployment address
- *
- * v3: Added sessions() auto-getter (returns deckSeed, activePlayerIndex, etc.)
- *     Added getRevealedCards for showdown card display
- */
-
 export const POKER_GAME_ADDRESS = (
   import.meta.env.VITE_POKER_GAME_ADDRESS ??
-  '0xA0a11bFAA807bC0073D3D4b7FcaDEE60F6f8DF4F'
+  '0x1AC50DD7afBcAFfa0579A3173A57523eE374E25e'
 ) as `0x${string}`
 
 export const POKER_GAME_ABI = [
-  // ── Events ──
   { type: 'event', name: 'TableCreated', inputs: [{ name: 'tableId', type: 'uint256', indexed: true }, { name: 'creator', type: 'address', indexed: true }, { name: 'smallBlind', type: 'uint256' }, { name: 'bigBlind', type: 'uint256' }, { name: 'maxPlayers', type: 'uint8' }] },
   { type: 'event', name: 'PlayerJoined', inputs: [{ name: 'tableId', type: 'uint256', indexed: true }, { name: 'player', type: 'address', indexed: true }, { name: 'seat', type: 'uint8' }, { name: 'buyIn', type: 'uint256' }] },
+  { type: 'event', name: 'PlayerLeft', inputs: [{ name: 'tableId', type: 'uint256', indexed: true }, { name: 'player', type: 'address', indexed: true }, { name: 'cashOut', type: 'uint256' }] },
   { type: 'event', name: 'StatusChanged', inputs: [{ name: 'tableId', type: 'uint256', indexed: true }, { name: 'from', type: 'uint8' }, { name: 'to', type: 'uint8' }] },
   { type: 'event', name: 'PlayerActed', inputs: [{ name: 'tableId', type: 'uint256', indexed: true }, { name: 'player', type: 'address', indexed: true }, { name: 'action', type: 'uint8' }, { name: 'value', type: 'uint256' }] },
   { type: 'event', name: 'CommunityRevealed', inputs: [{ name: 'tableId', type: 'uint256', indexed: true }, { name: 'stage', type: 'uint8' }, { name: 'cards', type: 'uint8[5]' }] },
   { type: 'event', name: 'ShowdownResult', inputs: [{ name: 'tableId', type: 'uint256', indexed: true }, { name: 'winner', type: 'address', indexed: true }, { name: 'winningRank', type: 'uint32' }, { name: 'payout', type: 'uint256' }] },
   { type: 'event', name: 'Deposited', inputs: [{ name: 'player', type: 'address', indexed: true }, { name: 'amount', type: 'uint256' }, { name: 'newBalance', type: 'uint256' }] },
   { type: 'event', name: 'Withdrawn', inputs: [{ name: 'player', type: 'address', indexed: true }, { name: 'amount', type: 'uint256' }, { name: 'newBalance', type: 'uint256' }] },
+  { type: 'event', name: 'SessionAuthorized', inputs: [{ name: 'player', type: 'address', indexed: true }, { name: 'session', type: 'address', indexed: true }, { name: 'expiresAt', type: 'uint64' }] },
+  { type: 'event', name: 'SessionRevoked', inputs: [{ name: 'player', type: 'address', indexed: true }, { name: 'session', type: 'address', indexed: true }] },
 
-  // ── sessions(uint256) — auto-generated getter, returns ALL scalar fields ──
-  // Includes deckSeed, activePlayerIndex, smallBlind, bigBlind — not in getSession()
   {
     type: 'function', name: 'sessions', stateMutability: 'view',
     inputs: [{ name: '', type: 'uint256' }],
@@ -45,6 +38,7 @@ export const POKER_GAME_ABI = [
       { name: 'deckSeed', type: 'bytes32' },
       { name: 'deckCommitment', type: 'bytes32' },
       { name: 'deckCursor', type: 'uint8' },
+      { name: 'community', type: 'uint8[5]' },
       { name: 'communityCount', type: 'uint8' },
       { name: 'saltsCommitted', type: 'uint8' },
       { name: 'saltsRevealed', type: 'uint8' },
@@ -52,8 +46,6 @@ export const POKER_GAME_ABI = [
       { name: 'actionTimeout', type: 'uint256' },
     ],
   },
-
-  // ── View functions ──
   {
     type: 'function', name: 'getSession', stateMutability: 'view',
     inputs: [{ name: 'tableId', type: 'uint256' }],
@@ -88,17 +80,25 @@ export const POKER_GAME_ABI = [
   { type: 'function', name: 'getCommunityCards', stateMutability: 'view', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [{ name: '', type: 'uint8[5]' }] },
   { type: 'function', name: 'tableCount', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
   { type: 'function', name: 'getBalance', stateMutability: 'view', inputs: [{ name: 'player', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] },
+  { type: 'function', name: 'isSessionAuthorized', stateMutability: 'view', inputs: [{ name: 'player', type: 'address' }, { name: 'session', type: 'address' }], outputs: [{ name: '', type: 'bool' }] },
 
-  // ── Write functions ──
   { type: 'function', name: 'deposit', stateMutability: 'payable', inputs: [], outputs: [] },
   { type: 'function', name: 'withdraw', stateMutability: 'nonpayable', inputs: [{ name: 'amount', type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'authorizeSession', stateMutability: 'nonpayable', inputs: [{ name: 'session', type: 'address' }, { name: 'expiresAt', type: 'uint64' }], outputs: [] },
+  { type: 'function', name: 'revokeSession', stateMutability: 'nonpayable', inputs: [{ name: 'session', type: 'address' }], outputs: [] },
   { type: 'function', name: 'joinTable', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'buyIn', type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'joinTableFor', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'player', type: 'address' }, { name: 'buyIn', type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'leaveTable', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'leaveTableFor', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'player', type: 'address' }], outputs: [] },
   { type: 'function', name: 'commitSalt', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'saltHash', type: 'bytes32' }], outputs: [] },
+  { type: 'function', name: 'commitSaltFor', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'player', type: 'address' }, { name: 'saltHash', type: 'bytes32' }], outputs: [] },
   { type: 'function', name: 'requestDeal', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'requestDealFor', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'player', type: 'address' }], outputs: [] },
   { type: 'function', name: 'playerAction', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'action', type: 'uint8' }, { name: 'value', type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'playerActionFor', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'player', type: 'address' }, { name: 'action', type: 'uint8' }, { name: 'value', type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'forceTimeout', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'revealHoleCards', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'salt', type: 'bytes32' }], outputs: [] },
+  { type: 'function', name: 'revealHoleCardsFor', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'player', type: 'address' }, { name: 'salt', type: 'bytes32' }], outputs: [] },
   { type: 'function', name: 'evaluateShowdown', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'settleLastStanding', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
 ] as const

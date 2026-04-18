@@ -216,7 +216,7 @@ export function useSessionWallet() {
       const gasCost = 21_000n * 2_000_000_000n
       const sendBack = nativeBal > gasCost ? nativeBal - gasCost : 0n
       if (sendBack > 0n) {
-        const h = await wc.sendTransaction({ to: mainWallet as `0x${string}`, value: sendBack, gas: 21_000n, gasPrice: 1_000_000_000n })
+        const h = await wc.sendTransaction({ account: wc.account!, chain: wc.chain, to: mainWallet as `0x${string}`, value: sendBack, gas: 21_000n, gasPrice: 1_000_000_000n })
         await pc.waitForTransactionReceipt({ hash: h, timeout: 30_000 })
       }
       sessionStorage.removeItem(SK_PRIV); sessionStorage.removeItem(SK_MAIN)
@@ -243,7 +243,7 @@ export function useSessionWallet() {
       const gasCost = 21_000n * 2_000_000_000n
       const sendBack = nativeBal > gasCost ? nativeBal - gasCost : 0n
       if (sendBack > 0n) {
-        const h = await wc.sendTransaction({ to: mainWallet as `0x${string}`, value: sendBack, gas: 21_000n, gasPrice: 1_000_000_000n })
+        const h = await wc.sendTransaction({ account: wc.account!, chain: wc.chain, to: mainWallet as `0x${string}`, value: sendBack, gas: 21_000n, gasPrice: 1_000_000_000n })
         await pc.waitForTransactionReceipt({ hash: h, timeout: 30_000 })
       }
       sessionStorage.removeItem(SK_PRIV); sessionStorage.removeItem(SK_MAIN)

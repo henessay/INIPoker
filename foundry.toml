@@ -14,7 +14,7 @@ solc_version     = "0.8.20"
 optimizer        = true
 optimizer_runs   = 200
 evm_version      = "paris"
-via_ir           = false
+via_ir           = true
 
 # Import remappings
 # forge-std is installed via: forge install foundry-rs/forge-std --no-commit

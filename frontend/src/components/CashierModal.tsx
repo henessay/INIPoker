@@ -86,7 +86,7 @@ export default function CashierModal({
           </div>
           <div style={s.flowArrow}>{tab === 'deposit' ? '\u2192' : '\u2190'}</div>
           <div style={{...s.flowBox, ...s.flowBoxActive}}>
-            <span style={s.flowLabel}>Game</span>
+            <span style={s.flowLabel}>Room</span>
             <span style={{...s.flowVal, color: '#7ECFB3'}}>{isLoading ? '...' : gameBalance}</span>
             <span style={s.flowUnit}>INIT</span>
           </div>
@@ -117,7 +117,7 @@ export default function CashierModal({
           <div style={feedback.type === 'ok' ? s.feedbackOk : feedback.type === 'err' ? s.feedbackErr : s.feedbackInfo}>{feedback.msg}</div>
         )}
         <button onClick={onRefreshBalances} style={s.refreshBtn}>{'\u21BB'} Refresh Balances</button>
-        <p style={s.note}>{tab === 'deposit' ? 'Transfers INIT from your wallet into the game contract.' : 'Returns INIT from game balance to your wallet.'}</p>
+        <p style={s.note}>{tab === 'deposit' ? 'Transfers INIT from your wallet into your room balance.' : 'Returns INIT from your room balance back to your wallet.'}</p>
       </div>
     </div>
   )

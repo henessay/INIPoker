@@ -170,7 +170,7 @@ contract PokerGameTest is Test {
 
     function test_T06_join_success() public {
         _join(alice, 10 ether);
-        (uint256 chips,,,,,,,) = game.getPlayerState(tableId, alice);
+        (uint256 chips,,,,,,,,) = game.getPlayerState(tableId, alice);
         assertEq(chips, 10 ether);
     }
 
@@ -269,11 +269,9 @@ contract PokerGameTest is Test {
         _seatTwo();
         _commitTwo();
         _deal();
-        assertEq(_getStatus(), uint8(PokerLib.GameStatus.PreFlop), "After VRF -> PreFlop");
-        /*
         assertEq(_getStatus(), uint8(PokerLib.GameStatus.PreFlop), "After VRF → PreFlop");
-        */
     }
+
     function test_T19_revert_deal_notEnoughPlayers() public {
         _join(alice, 10 ether);
         _commitSalt(alice, ALICE_SALT);
@@ -380,11 +378,17 @@ contract PokerGameTest is Test {
         // If not showdown yet, the remaining two need to act through betting rounds
         // For simplicity, let's have the remaining players check/call through
         if (st >= 2 && st <= 5) {
-            // Fold the next player in seat order. After the first fold, turn advances
-            // clockwise to the next still-active seat.
-            uint8 nextSeat = (firstSeat + 1) % 3;
-            vm.prank(p[nextSeat]);
-            game.playerAction(tableId, PokerLib.Action.Fold, 0);
+            // Just fold the next active player to trigger last-standing
+            (, , , , , , , , , , ) = game.getSession(tableId);
+            // Find next active
+            for (uint8 i = 0; i < 3; i++) {
+                (,,PokerLib.Action la, bool active,,,, ) = game.getPlayerState(tableId, p[i]);
+                if (active && la == PokerLib.Action.None) {
+                    vm.prank(p[i]);
+                    game.playerAction(tableId, PokerLib.Action.Fold, 0);
+                    break;
+                }
+            }
         }
 
         // Should now be showdown or settleable
@@ -717,9 +721,15 @@ contract PokerGameTest is Test {
         // Check if another active needs to fold
         uint8 st = _getStatus();
         if (st < 6) {
-            uint8 nextSeat = (firstSeat + 1) % 3;
-            vm.prank(p[nextSeat]);
-            game.playerAction(tableId, PokerLib.Action.Fold, 0);
+            // Find next active player who hasn't acted
+            for (uint8 i = 0; i < 3; i++) {
+                (,,PokerLib.Action la, bool active,,,,) = game.getPlayerState(tableId, p[i]);
+                if (active && la == PokerLib.Action.None) {
+                    vm.prank(p[i]);
+                    game.playerAction(tableId, PokerLib.Action.Fold, 0);
+                    break;
+                }
+            }
         }
 
         // Should be showdown with 1 active — settle directly
@@ -777,3 +787,4 @@ contract PokerGameTest is Test {
         assertTrue(used < 150_000, "Fold < 150k");
     }
 }
+
