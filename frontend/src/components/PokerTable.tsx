@@ -538,10 +538,14 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       await sWrite('commitSaltFor', [tableId, address, hash])
       addLog('Salt committed')
     } catch (err: any) {
-      setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 180))
+      const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
+      setLocalError(msg)
+      // Rethrow so the auto loop knows this step failed and will retry.
+      throw err
+    } finally {
+      setActionPending(false)
+      setTimeout(refreshAll, 1000)
     }
-    setActionPending(false)
-    setTimeout(refreshAll, 1000)
   }, [address, addLog, refreshAll, sWrite, saltKey, sessionAccount, tableId])
 
   const handleDeal = useCallback(async () => {
@@ -552,20 +556,23 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       await sWrite('requestDealFor', [tableId, address], undefined, 800_000n)
       addLog('Dealing new hand')
     } catch (err: any) {
-      setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 180))
+      const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
+      setLocalError(msg)
+      throw err
+    } finally {
+      setActionPending(false)
+      setTimeout(refreshAll, 1500)
     }
-    setActionPending(false)
-    setTimeout(refreshAll, 1500)
   }, [address, addLog, refreshAll, sWrite, tableId])
 
   const handleReveal = useCallback(async () => {
     if (!address) return
     const found = lookupSalt()
     if (!found) {
-      // Don't block the auto loop — just report once; auto-retry will re-run.
       console.warn('[REVEAL] no salt found for handId', handId, 'expected', expectedHandId)
-      setLocalError('Salt not found for this hand - rejoining might be required')
-      return
+      // Throw so auto loop clears lastAutoKeyRef and retries; meanwhile a
+      // teammate's reveal may still fire or the other side re-commits.
+      throw new Error('Salt not found for this hand')
     }
     setActionPending(true)
     setLocalError(null)
@@ -573,10 +580,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       await sWrite('revealHoleCardsFor', [tableId, address, found.value])
       addLog('Cards revealed')
     } catch (err: any) {
-      setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 180))
+      const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
+      setLocalError(msg)
+      throw err
+    } finally {
+      setActionPending(false)
+      setTimeout(refreshAll, 1500)
     }
-    setActionPending(false)
-    setTimeout(refreshAll, 1500)
   }, [address, addLog, refreshAll, sWrite, lookupSalt, tableId, handId, expectedHandId])
 
   const handleEvaluate = useCallback(async () => {
@@ -586,10 +596,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       await sWrite('evaluateShowdown', [tableId], undefined, 800_000n)
       addLog('Showdown resolved')
     } catch (err: any) {
-      setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 180))
+      const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
+      setLocalError(msg)
+      throw err
+    } finally {
+      setActionPending(false)
+      setTimeout(refreshAll, 1500)
     }
-    setActionPending(false)
-    setTimeout(refreshAll, 1500)
   }, [addLog, refreshAll, sWrite, tableId])
 
   const handleSitDown = async (buyIn: number) => {
@@ -962,7 +975,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
                 </div>
                 {pot > 0n && <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'center', animation: 'stackGlow 2s ease-in-out infinite' }}><ChipStack amountWei={pot} size="large" /></div>}
                 {currentBet > 0n && <div style={{ fontSize: '10px', color: '#888', marginTop: '4px' }}>Current bet: {formatEther(currentBet)} INIT</div>}
-                {status === 1 && !vrfStale && <div style={st.potHint}>Dealing... waiting for randomness</div>}
+                {status === 1 && !vrfStale && <div style={st.potHint}>Waiting for VRF callback...</div>}
                 {status === 1 && vrfStale && (
                   <div style={{ ...st.potHint, color: '#E07070' }}>
                     VRF callback stuck. Randomness provider did not respond.<br/>
@@ -970,7 +983,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
                   </div>
                 )}
                 {status === 0 && playerCount < 2 && <div style={st.potHint}>Waiting for players... ({playerCount}/2)</div>}
-                {(status === 0 || status === 7) && playerCount >= 2 && <div style={{ ...st.potHint, color: '#7ECFB3' }}>{saltsCommitted < playerCount ? `Auto-committing salts (${saltsCommitted}/${playerCount})...` : 'Starting next hand...'}</div>}
+                {(status === 0 || status === 7) && playerCount >= 2 && saltsCommitted < playerCount && (
+                  <div style={{ ...st.potHint, color: '#7ECFB3' }}>Waiting for all salts ({saltsCommitted}/{playerCount})...</div>
+                )}
+                {(status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount && !vrfPending && (
+                  <div style={{ ...st.potHint, color: '#E8C07E' }}>Ready to request deal...</div>
+                )}
+                {(status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount && vrfPending && (
+                  <div style={{ ...st.potHint, color: '#E8C07E' }}>Requesting deal...</div>
+                )}
               </div>
 
               {communityCount > 0 && status >= 3 && status <= 7 && playerCount >= 1 && (
@@ -1067,7 +1088,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
               {(status === 0 || status === 7) && isSeated && playerCount >= 2 && (
                 <span style={{ color: '#7ECFB3', fontSize: '12px' }}>
-                  {saltsCommitted < playerCount ? `\u23F3 Auto-committing (${saltsCommitted}/${playerCount})` : '\u23F3 Dealing...'}
+                  {saltsCommitted < playerCount
+                    ? `\u23F3 Waiting for salts (${saltsCommitted}/${playerCount})`
+                    : vrfPending
+                      ? '\u23F3 Requesting deal...'
+                      : '\u23F3 Ready to deal...'}
                 </span>
               )}
 

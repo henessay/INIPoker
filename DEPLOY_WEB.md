@@ -23,7 +23,7 @@ git push -u origin main
   - **Build Command:** `npm run build`
   - **Output Directory:** `dist`
 - Environment Variables (добавить):
-  - `VITE_POKER_GAME_ADDRESS` = `0x6FEDF1582373d22Fd62725E82E51737811BA27c0`
+  - `VITE_POKER_GAME_ADDRESS` = `0xeCB7Ff40f3C6058785Ca97d95bb6AC4400cB842d`
 - Нажать "Deploy"
 
 3. **Готово!** Сайт будет доступен по адресу: `https://inipoker.vercel.app`
@@ -47,7 +47,7 @@ Vercel автоматически пересоберёт.
    - **Base directory:** `frontend`
    - **Build command:** `npm run build`
    - **Publish directory:** `frontend/dist`
-5. Environment Variables: `VITE_POKER_GAME_ADDRESS=0x6FEDF1582373d22Fd62725E82E51737811BA27c0`
+5. Environment Variables: `VITE_POKER_GAME_ADDRESS=0xeCB7Ff40f3C6058785Ca97d95bb6AC4400cB842d`
 
 ---
 
