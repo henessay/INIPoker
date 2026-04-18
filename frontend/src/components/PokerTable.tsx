@@ -349,8 +349,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const smallBlind = fs ? (fs[11] as bigint) : 0n
   const bigBlindWei = fs ? (fs[12] as bigint) : parseEther(bigBlind.toString())
   const deckSeed = fs ? (fs[15] as `0x${string}`) : ('0x0' as `0x${string}`)
-  const communityCount = fs ? Number(fs[19]) : 0
-  const saltsCommitted = fs ? Number(fs[20]) : 0
+  const communityCount = fs ? Number(fs[18]) : 0
+  const saltsCommitted = fs ? Number(fs[19]) : 0
   const community = (communityData ? Array.from(communityData as any) : [0, 0, 0, 0, 0]) as number[]
 
   const playerAddrs = ((players as readonly `0x${string}`[] | undefined) ?? []).filter(addr => addr.toLowerCase() !== ZERO_ADDR)
@@ -650,7 +650,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       addLog(`Seated with ${buyIn} INIT from room balance`)
       refreshAll()
     } catch (err: any) {
-      setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 220))
+      console.error('[SIT-DOWN] failed:', err)
+      const raw = err?.shortMessage ?? err?.message ?? String(err)
+      // Detect ABI/address mismatch (viem out-of-bounds decode errors)
+      const friendly = /out of bounds|AbiDecodingOutOfBounds|Position \d+/.test(raw)
+        ? 'Frontend ABI/address does not match deployed contract. Please refresh or contact support.'
+        : raw
+      setLocalError(friendly.slice(0, 240))
       setSessionStatus('')
     }
     setSittingDown(false)

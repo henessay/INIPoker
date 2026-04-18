@@ -38,7 +38,6 @@ export const POKER_GAME_ABI = [
       { name: 'deckSeed', type: 'bytes32' },
       { name: 'deckCommitment', type: 'bytes32' },
       { name: 'deckCursor', type: 'uint8' },
-      { name: 'community', type: 'uint8[5]' },
       { name: 'communityCount', type: 'uint8' },
       { name: 'saltsCommitted', type: 'uint8' },
       { name: 'saltsRevealed', type: 'uint8' },
