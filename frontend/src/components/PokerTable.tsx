@@ -508,12 +508,16 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   // Auto-loop state must be defined before handlers so they can reset it.
   const autoBusyRef = useRef(false)
   const lastAutoKeyRef = useRef<string | null>(null)
+  // Watchdog: if the on-chain state doesn't progress for a while but the loop
+  // thinks it already acted, force a retry by clearing the key.
+  const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // When the session wallet / address / table changes (e.g. user left and
   // came back with a new session), blow away the auto-loop lock so fresh
   // actions can start immediately instead of being blocked by stale refs.
   useEffect(() => {
     autoBusyRef.current = false
     lastAutoKeyRef.current = null
+    if (watchdogTimerRef.current) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null }
   }, [sessionAddr, address, tableId])
 
   const doAction = useCallback(async (fnName: string, args: unknown[], label: string) => {
@@ -838,7 +842,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   }, [isSeated, saltKeyPrefix, sessionKey])
 
   useEffect(() => {
-    if (!sessionAccount || !address || !isSeated || !saltKeyPrefix || autoBusyRef.current || txBusy) return
+    if (!sessionAccount || !address || !isSeated || !saltKeyPrefix || autoBusyRef.current || txBusy) {
+      if (isSeated && sessionAccount && (status === 0 || status === 7)) {
+        console.log('[AUTO-GUARD]', {
+          hasSess: !!sessionAccount, hasAddr: !!address, isSeated,
+          hasSaltPrefix: !!saltKeyPrefix, busy: autoBusyRef.current, txBusy,
+        })
+      }
+      return
+    }
 
     const activeCount = allPlayers.filter(p => p.isActive).length
     const playersWithChips = allPlayers.filter(p => p.chips > 0n)
@@ -846,7 +858,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     const iHaveChips = (myPlayer?.chips ?? 0n) > 0n
 
     const stateKey = `${handId}-${status}-${saltsCommitted}-${communityCount}-${activeCount}-${myPlayer?.hasRevealed ? 'r' : 'n'}`
-    if (lastAutoKeyRef.current === stateKey) return
+    if (lastAutoKeyRef.current === stateKey) {
+      if (status === 0 || status === 7) {
+        console.log('[AUTO-SKIP] stateKey unchanged:', stateKey)
+      }
+      return
+    }
+    console.log('[AUTO-TICK]', { stateKey, status, saltsCommitted, playerCount, enoughChippedPlayers, iHaveChips })
 
     const hasAnyUsableSalt = lookupSalt() !== null
 
@@ -903,7 +921,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     }
     // Deal: all salts in, fire requestDealFor
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount) {
-      if (!enoughChippedPlayers) return
+      if (!enoughChippedPlayers) { console.log('[AUTO-DEAL-SKIP] not enough chipped players'); return }
+      console.log('[AUTO-DEAL] firing requestDealFor')
       runAuto(handleDeal)
       return
     }
@@ -941,6 +960,24 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   }, [address, allPlayers, communityCount, handleCommit, handleDeal, handleEvaluate, handleReveal,
       handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
       refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, txBusy, lookupSalt])
+
+  // Watchdog: if on-chain state didn't progress in 8 seconds, force the
+  // auto-loop to try again. Protects against any unexpected swallow/stall.
+  useEffect(() => {
+    if (!isSeated || !sessionAccount) return
+    if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current)
+    watchdogTimerRef.current = setTimeout(() => {
+      if (autoBusyRef.current) {
+        console.warn('[WATCHDOG] auto-loop has been busy 8s, releasing lock')
+        autoBusyRef.current = false
+        lastAutoKeyRef.current = null
+        refreshAll()
+      }
+    }, 8000)
+    return () => {
+      if (watchdogTimerRef.current) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null }
+    }
+  }, [handId, status, saltsCommitted, communityCount, isSeated, sessionAccount, refreshAll])
 
   // Track how long we've been stuck in Dealing (VRF callback pending).
   // If longer than 20s, surface a clear UI warning.
