@@ -454,7 +454,55 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const [leaving, setLeaving] = useState(false)
 
   const txBusy = actionPending || sittingDown || leaving || mainWritePending
-  const saltKey = useMemo(() => address ? `inipoker_salt_${tableId.toString()}_${address.toLowerCase()}_${handId}` : null, [address, handId, tableId])
+
+  // Salt storage scheme:
+  //   During Waiting(0)/Settled(7), commit applies to the NEXT hand.
+  //   Contract increments handId INSIDE requestDeal, so a salt committed
+  //   at handId=N ends up belonging to hand N+1.
+  //   During PreFlop..Showdown (2..6) reveal uses the CURRENT hand.
+  //   We therefore use 'expected' handId when writing, and a fallback
+  //   lookup (current -> +1 -> -1) when reading.
+  const saltKeyPrefix = useMemo(
+    () => address ? `inipoker_salt_${tableId.toString()}_${address.toLowerCase()}_` : null,
+    [address, tableId]
+  )
+  const expectedHandId = useMemo(() => {
+    if (status === 0 || status === 7) return handId + 1
+    return handId
+  }, [handId, status])
+  const saltKey = useMemo(
+    () => saltKeyPrefix ? `${saltKeyPrefix}${expectedHandId}` : null,
+    [saltKeyPrefix, expectedHandId]
+  )
+  // Find a salt we stored earlier even if the handId window has shifted.
+  // Try current expected, current-1, current+1 — covers any commit/deal race.
+  const lookupSalt = useCallback((): { key: string; value: `0x${string}` } | null => {
+    if (!saltKeyPrefix) return null
+    const candidates = [expectedHandId, expectedHandId - 1, expectedHandId + 1, handId, handId + 1, handId - 1]
+    const seen = new Set<number>()
+    for (const hid of candidates) {
+      if (hid < 0 || seen.has(hid)) continue
+      seen.add(hid)
+      const k = `${saltKeyPrefix}${hid}`
+      const v = getStoredValue(k) as `0x${string}` | null
+      if (v) return { key: k, value: v }
+    }
+    return null
+  }, [saltKeyPrefix, expectedHandId, handId])
+  // Remove salts for hands that are clearly behind us (> 2 hands old).
+  const cleanupOldSalts = useCallback(() => {
+    if (!saltKeyPrefix || typeof sessionStorage === 'undefined') return
+    const keep = new Set([handId, handId + 1, handId - 1, expectedHandId])
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i)
+      if (!k || !k.startsWith(saltKeyPrefix)) continue
+      const n = Number(k.slice(saltKeyPrefix.length))
+      if (!Number.isFinite(n) || keep.has(n)) continue
+      try { sessionStorage.removeItem(k) } catch {}
+    }
+  }, [saltKeyPrefix, handId, expectedHandId])
+  // When a new hand starts (handId increments), wipe stale keys.
+  useEffect(() => { cleanupOldSalts() }, [handId, cleanupOldSalts])
 
   const doAction = useCallback(async (fnName: string, args: unknown[], label: string) => {
     setActionPending(true)
@@ -510,23 +558,25 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   }, [address, addLog, refreshAll, sWrite, tableId])
 
   const handleReveal = useCallback(async () => {
-    if (!address || !saltKey) return
-    const salt = getStoredValue(saltKey) as `0x${string}` | null
-    if (!salt) {
-      setLocalError('Salt not found - cannot reveal')
+    if (!address) return
+    const found = lookupSalt()
+    if (!found) {
+      // Don't block the auto loop — just report once; auto-retry will re-run.
+      console.warn('[REVEAL] no salt found for handId', handId, 'expected', expectedHandId)
+      setLocalError('Salt not found for this hand - rejoining might be required')
       return
     }
     setActionPending(true)
     setLocalError(null)
     try {
-      await sWrite('revealHoleCardsFor', [tableId, address, salt])
+      await sWrite('revealHoleCardsFor', [tableId, address, found.value])
       addLog('Cards revealed')
     } catch (err: any) {
       setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 180))
     }
     setActionPending(false)
     setTimeout(refreshAll, 1500)
-  }, [address, addLog, refreshAll, sWrite, saltKey, tableId])
+  }, [address, addLog, refreshAll, sWrite, lookupSalt, tableId, handId, expectedHandId])
 
   const handleEvaluate = useCallback(async () => {
     setActionPending(true)
@@ -668,11 +718,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     setLocalError(null)
     try {
       let latestStatus = status
-      if (latestStatus === 6 && myPlayer?.isActive && !myPlayer.hasRevealed && saltKey) {
-        const salt = getStoredValue(saltKey) as `0x${string}` | null
-        if (salt) {
+      if (latestStatus === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
+        const found = lookupSalt()
+        if (found) {
           setLocalStatus('Revealing cards...')
-          await sWrite('revealHoleCardsFor', [tableId, address, salt])
+          await sWrite('revealHoleCardsFor', [tableId, address, found.value])
           await new Promise(r => setTimeout(r, 1500))
         }
       }
@@ -721,7 +771,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         setLocalStatus('Leaving table...')
         await sWrite('leaveTableFor', [tableId, address], undefined, 500_000n)
       }
-      removeStoredValue(saltKey)
+      // Purge every salt we ever stored for this table+player (any handId)
+      if (saltKeyPrefix && typeof sessionStorage !== 'undefined') {
+        for (let i = sessionStorage.length - 1; i >= 0; i--) {
+          const k = sessionStorage.key(i)
+          if (k && k.startsWith(saltKeyPrefix)) { try { sessionStorage.removeItem(k) } catch {} }
+        }
+      }
       setLocalStatus(null)
       addLog('Left table - chips returned to room balance')
       refreshAll()
@@ -735,20 +791,31 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const handleCloseSession = useCallback(() => {
     if (isSeated) return
     removeStoredValue(sessionKey)
-    removeStoredValue(saltKey)
+    if (saltKeyPrefix && typeof sessionStorage !== 'undefined') {
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const k = sessionStorage.key(i)
+        if (k && k.startsWith(saltKeyPrefix)) { try { sessionStorage.removeItem(k) } catch {} }
+      }
+    }
     setSessionPk(null)
     setLocalStatus('Session cleared on this device')
     setTimeout(() => setLocalStatus(null), 1500)
-  }, [isSeated, saltKey, sessionKey])
+  }, [isSeated, saltKeyPrefix, sessionKey])
 
   const autoBusyRef = useRef(false)
   const lastAutoKeyRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!sessionAccount || !address || !isSeated || !saltKey || autoBusyRef.current || txBusy) return
+    if (!sessionAccount || !address || !isSeated || !saltKeyPrefix || autoBusyRef.current || txBusy) return
 
     const activeCount = allPlayers.filter(p => p.isActive).length
+    const playersWithChips = allPlayers.filter(p => p.chips > 0n)
+    const enoughChippedPlayers = playersWithChips.length >= 2
+    const iHaveChips = (myPlayer?.chips ?? 0n) > 0n
+
     const stateKey = `${handId}-${status}-${saltsCommitted}-${communityCount}-${activeCount}-${myPlayer?.hasRevealed ? 'r' : 'n'}`
     if (lastAutoKeyRef.current === stateKey) return
+
+    const hasAnyUsableSalt = lookupSalt() !== null
 
     const runAuto = (fn: () => Promise<unknown>, retryDelay = 4000) => {
       lastAutoKeyRef.current = stateKey
@@ -757,7 +824,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         .then(() => {
           setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500)
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[AUTO] action failed, retrying:', err)
           setTimeout(() => {
             autoBusyRef.current = false
             lastAutoKeyRef.current = null
@@ -766,29 +834,58 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         })
     }
 
+    // Commit: only if I have chips AND >=2 chipped players; salt goes under expectedHandId (handId+1).
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted < playerCount) {
+      if (!enoughChippedPlayers || !iHaveChips) return
+      // If we already stored a salt for this upcoming hand, skip re-commit (contract will revert).
       if (!getStoredValue(saltKey)) {
-        runAuto(handleCommit)
+        // Short pause after showdown so players can read the winner banner
+        const delay = status === 7 ? 5000 : 0
+        lastAutoKeyRef.current = stateKey
+        autoBusyRef.current = true
+        setTimeout(() => {
+          handleCommit()
+            .then(() => setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500))
+            .catch(() => setTimeout(() => {
+              autoBusyRef.current = false
+              lastAutoKeyRef.current = null
+              refreshAll()
+            }, 4000))
+        }, delay)
         return
       }
     }
+    // Deal: all salts in, fire requestDealFor
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount) {
+      if (!enoughChippedPlayers) return
       runAuto(handleDeal)
       return
     }
+    // Reveal: status==6 Showdown. Only reveal if we actually have any usable salt.
     if (status === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
-      if (getStoredValue(saltKey)) {
+      if (hasAnyUsableSalt) {
         runAuto(handleReveal)
         return
       }
+      // No salt on this device — nothing to do; other seats may still reveal.
     }
+    // Evaluate: when all active players have revealed
     if (status === 6) {
       const active = allPlayers.filter(p => p.isActive)
+      if (active.length === 1) {
+        // Last one standing — contract has settleLastStanding for this, but evaluateShowdown
+        // also handles it. Kick evaluate.
+        runAuto(handleEvaluate)
+        return
+      }
       if (active.length >= 2 && active.every(p => p.hasRevealed)) {
         runAuto(handleEvaluate)
+        return
       }
     }
-  }, [address, allPlayers, communityCount, handleCommit, handleDeal, handleEvaluate, handleReveal, handId, isSeated, myPlayer?.hasRevealed, playerCount, refreshAll, saltKey, saltsCommitted, sessionAccount, status, txBusy])
+  }, [address, allPlayers, communityCount, handleCommit, handleDeal, handleEvaluate, handleReveal,
+      handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
+      refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, txBusy, lookupSalt])
 
   const [timeLeft, setTimeLeft] = useState(45)
   const turnStartRef = useRef<number>(0)
@@ -946,16 +1043,14 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
               {status >= 2 && status <= 5 && isSeated && !isMyTurn && <span style={{ color: '#888', fontSize: '12px' }}>Waiting for opponent...</span>}
 
               {(status === 0 || status === 7) && isSeated && playerCount >= 2 && (
-                <span style={{ color: '#7ECFB3', fontSize: '12px', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ color: '#7ECFB3', fontSize: '12px' }}>
                   {saltsCommitted < playerCount ? `\u23F3 Auto-committing (${saltsCommitted}/${playerCount})` : '\u23F3 Dealing...'}
-                  {saltsCommitted < playerCount ? <button onClick={handleCommit} disabled={actionPending} style={st.btnHelper}>Retry commit</button> : <button onClick={handleDeal} disabled={actionPending} style={st.btnHelper}>Retry deal</button>}
                 </span>
               )}
 
               {status === 6 && isSeated && myPlayer?.isActive && (
-                <span style={{ color: '#7ECFB3', fontSize: '12px', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ color: '#7ECFB3', fontSize: '12px' }}>
                   {!myPlayer.hasRevealed ? '\u23F3 Revealing...' : '\u23F3 Evaluating...'}
-                  {!myPlayer.hasRevealed ? <button onClick={handleReveal} disabled={actionPending} style={st.btnHelper}>Retry reveal</button> : <button onClick={handleEvaluate} disabled={actionPending} style={st.btnHelper}>Retry evaluate</button>}
                 </span>
               )}
 
