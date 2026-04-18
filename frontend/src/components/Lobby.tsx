@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useInterwovenKit } from '@initia/interwovenkit-react'
 import CashierModal from './CashierModal'
@@ -16,8 +16,8 @@ interface Tournament { id: number; name: string; type: GameType; buyIn: number; 
 
 // ── TEST TABLES (tiny blinds for easy testing) ──
 const TEST_TABLES: Table[] = [
-  { id: 0, name: 'Test Micro 01', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0, featured: true },
-  { id: 1, name: 'Test Micro 02', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0 },
+  { id: 14, name: 'Test Micro 01', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0, featured: true },
+  { id: 15, name: 'Test Micro 02', type: 'holdem', blinds: '0.1/0.2', smallBlind: 0.1, bigBlind: 0.2, buyIn: '2–20', players: 0, max: 6, avgPot: '0', flop: '—', hhr: 0 },
 ]
 
 const HOLDEM_TABLES: Table[] = [
@@ -140,7 +140,7 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
                 <span style={s.balDot} />
                 {balLoading ? '…' : `${walletBalance}`}
                 <span style={{color:'#555'}}>|</span>
-                <span style={{color:'#7ECFB3'}} title="Room balance">{balLoading ? '…' : gameBalance}</span>
+                <span style={{color:'#7ECFB3'}}>{balLoading ? '…' : gameBalance}</span>
                 <span style={{color:'#555',fontSize:'10px'}}>INIT</span>
               </span>
               <button onClick={() => setCashierOpen(true)} style={s.cashierBtn}>Cashier</button>
@@ -268,7 +268,7 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
 //  TABLE PREVIEW PANEL
 // ═══════════════════════════════════════════════════════════
 
-function TablePanel({ t, onJoin, isConnected, openConnect, dots }: { t: Table; onJoin: (id:number,bb:number,name:string)=>void; isConnected: boolean; openConnect: ()=>void; dots: (c:number,m:number)=>ReactNode }) {
+function TablePanel({ t, onJoin, isConnected, openConnect, dots }: { t: Table; onJoin: (id:number,bb:number,name:string)=>void; isConnected: boolean; openConnect: ()=>void; dots: (c:number,m:number)=>JSX.Element }) {
   return (
     <>
       <div style={s.prevHdr}>
@@ -450,8 +450,6 @@ const s: Record<string, React.CSSProperties> = {
 
   bottom: { display:'flex', alignItems:'center', gap:'20px', padding:'8px 20px', borderTop:'1px solid #111', fontSize:'10px', color:'#2a2a2a' },
 }
-
-
 
 
 
