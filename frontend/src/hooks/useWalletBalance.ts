@@ -33,9 +33,10 @@ export interface WalletBalances {
   refetch: () => void
 }
 
-export function useWalletBalance(tableId?: bigint): WalletBalances {
+export function useWalletBalance(tableId?: bigint, playerAddress?: `0x${string}` | null): WalletBalances {
   const { address, isConnected } = useAccount()
   const hasContract = POKER_GAME_ADDRESS !== '0x0000000000000000000000000000000000000000'
+  const contractPlayer = playerAddress ?? address
 
   // ── Native L2 wallet balance ──
   const {
@@ -56,8 +57,8 @@ export function useWalletBalance(tableId?: bigint): WalletBalances {
     address: POKER_GAME_ADDRESS,
     abi: POKER_GAME_ABI,
     functionName: 'getBalance',
-    args: [address!],
-    query: { enabled: hasContract && isConnected && !!address },
+    args: [contractPlayer!],
+    query: { enabled: hasContract && isConnected && !!contractPlayer },
   })
 
   // ── Table-specific INIT stake ──
@@ -69,8 +70,8 @@ export function useWalletBalance(tableId?: bigint): WalletBalances {
     address: POKER_GAME_ADDRESS,
     abi: POKER_GAME_ABI,
     functionName: 'getPlayerState',
-    args: [tableId ?? 0n, address!],
-    query: { enabled: hasContract && isConnected && !!address && tableId !== undefined },
+    args: [tableId ?? 0n, contractPlayer!],
+    query: { enabled: hasContract && isConnected && !!contractPlayer && tableId !== undefined },
   })
 
   const tableStakeRaw = playerState ? (playerState[0] as bigint) : 0n

@@ -16,7 +16,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   formatEther, parseEther, keccak256, toHex, encodePacked,
   createWalletClient, createPublicClient, http,
-  type PublicClient,
 } from 'viem'
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
 import { useAccount, useReadContract, useReadContracts, useSendTransaction } from 'wagmi'
@@ -308,24 +307,41 @@ interface PokerTableProps {
 export default function PokerTable({ tableId, tableName, bigBlind, onBack }: PokerTableProps) {
   const { address, isConnected } = useAccount()
   const { sendTransactionAsync } = useSendTransaction()
-  const { walletBalance, gameBalance, isLoading: balLoading, refetch: refetchBal } = useWalletBalance(tableId)
 
   // ═══ Session wallet ═══
   const sessionKey = useMemo(() =>
     address ? `inipoker_session_${address.toLowerCase()}` : null, [address])
 
   const [sessionPk, setSessionPk] = useState<`0x${string}` | null>(null)
+  const getStoredValue = useCallback((key: string) => {
+    if (typeof window === 'undefined') return null
+    return localStorage.getItem(key) ?? sessionStorage.getItem(key)
+  }, [])
+  const setStoredValue = useCallback((key: string, value: string) => {
+    if (typeof window === 'undefined') return
+    localStorage.setItem(key, value)
+    sessionStorage.removeItem(key)
+  }, [])
+  const removeStoredValue = useCallback((key: string) => {
+    if (typeof window === 'undefined') return
+    localStorage.removeItem(key)
+    sessionStorage.removeItem(key)
+  }, [])
 
   useEffect(() => {
     if (!sessionKey) return
-    const stored = sessionStorage.getItem(sessionKey) as `0x${string}` | null
+    const stored = getStoredValue(sessionKey) as `0x${string}` | null
+    if (stored) {
+      setStoredValue(sessionKey, stored)
+    }
     setSessionPk(stored)
-  }, [sessionKey])
+  }, [sessionKey, getStoredValue, setStoredValue])
 
   const sessionAccount = useMemo(() => sessionPk ? privateKeyToAccount(sessionPk) : null, [sessionPk])
   const sessionAddr = sessionAccount?.address ?? null
+  const { walletBalance, gameBalance, isLoading: balLoading, refetch: refetchBal } = useWalletBalance(tableId, sessionAddr)
 
-  const publicClient = useMemo<PublicClient>(() => createPublicClient({
+  const publicClient = useMemo(() => createPublicClient({
     chain: INIPOKER_CHAIN as any, transport: http(RPC_URL_WRITE),
   }), [])
 
@@ -553,17 +569,17 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       const bytes = crypto.getRandomValues(new Uint8Array(32))
       const hex = toHex(bytes)
       const hash = keccak256(hex as `0x${string}`)
-      sessionStorage.setItem(saltKey, hex)
+      setStoredValue(saltKey, hex)
       await sWrite('commitSalt', [tableId, hash])
       addLog('Salt committed')
     } catch (err: any) {
       console.error('[COMMIT]', err)
-      sessionStorage.removeItem(saltKey)
+      removeStoredValue(saltKey)
       setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 140))
     }
     setActionPending(false)
     setTimeout(refreshAll, 1000)
-  }, [sWrite, tableId, addLog, refreshAll, saltKey, sessionAccount])
+  }, [sWrite, tableId, addLog, refreshAll, saltKey, sessionAccount, setStoredValue, removeStoredValue])
 
   const handleDeal = useCallback(async () => {
     setActionPending(true); setLocalError(null)
@@ -579,7 +595,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   }, [sWrite, tableId, addLog, refreshAll])
 
   const handleReveal = useCallback(async () => {
-    const salt = sessionStorage.getItem(saltKey) as `0x${string}` | null
+    const salt = getStoredValue(saltKey) as `0x${string}` | null
     if (!salt) { setLocalError('Salt not found - cannot reveal'); return }
     setActionPending(true); setLocalError(null)
     try {
@@ -591,7 +607,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     }
     setActionPending(false)
     setTimeout(refreshAll, 1500)
-  }, [sWrite, tableId, addLog, refreshAll, saltKey])
+  }, [sWrite, tableId, addLog, refreshAll, saltKey, getStoredValue])
 
   const handleEvaluate = useCallback(async () => {
     setActionPending(true); setLocalError(null)
@@ -651,12 +667,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     setSittingDown(true)
     try {
       // Step 1: Ensure session wallet exists
-      let pk = sessionStorage.getItem(sessionKey) as `0x${string}` | null
+      let pk = getStoredValue(sessionKey) as `0x${string}` | null
       if (!pk) {
         pk = generatePrivateKey()
-        sessionStorage.setItem(sessionKey, pk)
+        setStoredValue(sessionKey, pk)
         setSessionPk(pk)
       }
+      setSessionPk(pk)
       const account = privateKeyToAccount(pk)
       const sessAddr = account.address
       console.log('[SIT] Session addr:', sessAddr)
@@ -784,7 +801,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
             setLocalStatus('Settling showdown...')
             await sWrite('settleLastStanding', [tableId], undefined, 300_000n)
           } else if (myPlayer?.isActive && !myPlayer.hasRevealed) {
-            const salt = sessionStorage.getItem(saltKey) as `0x${string}` | null
+            const salt = getStoredValue(saltKey) as `0x${string}` | null
             if (!salt) {
               throw new Error('Cannot leave yet: your showdown reveal is still pending and the local salt is missing.')
             }
@@ -839,15 +856,17 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         await publicClient.waitForTransactionReceipt({ hash: returnHash, timeout: 20_000 })
       }
 
-      sessionStorage.removeItem(sessionKey!)
+      removeStoredValue(sessionKey!)
       const saltPrefix = `inipoker_salt_${tableId.toString()}_${sessionAddr}_`
-      for (let i = sessionStorage.length - 1; i >= 0; i--) {
-        const key = sessionStorage.key(i)
-        if (key && key.startsWith(saltPrefix)) {
-          sessionStorage.removeItem(key)
+      for (const storage of [localStorage, sessionStorage]) {
+        for (let i = storage.length - 1; i >= 0; i--) {
+          const key = storage.key(i)
+          if (key && key.startsWith(saltPrefix)) {
+            storage.removeItem(key)
+          }
         }
       }
-      sessionStorage.removeItem(`inipoker_salt_${tableId.toString()}_${sessionAddr}`)
+      removeStoredValue(`inipoker_salt_${tableId.toString()}_${sessionAddr}`)
       setSessionPk(null)
       setLocalStatus(null)
       addLog('Left table - funds returned')
@@ -869,12 +888,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (!sessionAccount || !isAtTable || autoBusyRef.current || txBusy) return
 
     const activeCount = activePlayers.length
-    // Count how many players at the table actually have chips (> 0).
     // A "broke" player (chips==0) cannot participate in the next hand — don't start
     // a new hand unless at least 2 players have chips.
-    const playersWithChips = allPlayers.filter(p => p.chips > 0n)
-    const enoughChippedPlayers = playersWithChips.length >= 2
-    const iHaveChips = myStake > 0n
 
     const stateKey = `${handId}-${status}-${saltsCommitted}-${communityCount}-${activeCount}-${myPlayer?.hasRevealed ? 'r' : 'n'}`
     if (lastAutoKeyRef.current === stateKey) return
@@ -899,8 +914,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
     // Commit salt — only if I have chips AND >=2 players have chips
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted < playerCount) {
-      if (!enoughChippedPlayers || !iHaveChips) return  // skip: can't start a new hand
-      const myHash = sessionStorage.getItem(saltKey)
+      const myHash = getStoredValue(saltKey)
       if (!myHash) {
         // After a hand just ended (status=7), pause 5s so players can see the winner
         const delay = status === 7 ? 5000 : 0
@@ -923,13 +937,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     }
     // Deal — only if enough chipped players
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount) {
-      if (!enoughChippedPlayers) return
       runAuto(handleDeal)
       return
     }
     // Reveal
     if (status === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
-      const salt = sessionStorage.getItem(saltKey)
+      const salt = getStoredValue(saltKey)
       if (salt) {
         runAuto(handleReveal)
         return
@@ -948,29 +961,20 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     }
   }, [handId, status, playerCount, saltsCommitted, isAtTable, sessionAccount, txBusy,
       myPlayer?.hasRevealed, myPlayer?.isActive, communityCount,
-      handleCommit, handleDeal, handleReveal, handleEvaluate, handleSettleLastStanding, refreshAll, saltKey, activePlayers, allPlayers.length])
+      handleCommit, handleDeal, handleReveal, handleEvaluate, handleSettleLastStanding, refreshAll, saltKey, activePlayers, allPlayers.length, getStoredValue])
 
   // ═══ Turn timer with AUTO-FOLD ═══
   const [timeLeft, setTimeLeft] = useState(45)
   const turnStartRef = useRef<number>(0)
-  const autoFoldFiredRef = useRef<string>('')  // `${handId}-${status}-${activePlayerIdx}` once fired
   useEffect(() => {
     if (!isMyTurn) { setTimeLeft(45); turnStartRef.current = 0; return }
     if (turnStartRef.current === 0) turnStartRef.current = Date.now()
-    const turnKey = `${handId}-${status}-${activePlayerIdx}`
     const interval = setInterval(() => {
       const elapsed = (Date.now() - turnStartRef.current) / 1000
-      const remaining = Math.max(0, 45 - elapsed)
-      setTimeLeft(remaining)
-      if (remaining <= 0 && autoFoldFiredRef.current !== turnKey && !txBusy && !actionPending) {
-        autoFoldFiredRef.current = turnKey
-        console.log('[AUTO-FOLD] timer expired, folding')
-        addLog('Timer expired - auto-fold')
-        handleFold()
-      }
+      setTimeLeft(Math.max(0, 45 - elapsed))
     }, 250)
     return () => clearInterval(interval)
-  }, [isMyTurn, handId, status, activePlayerIdx, txBusy, actionPending, addLog])
+  }, [isMyTurn])
 
   const winnerAddrs = useMemo(() => {
     if (status !== 7) return new Set<string>()
