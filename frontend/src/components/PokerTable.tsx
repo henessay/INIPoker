@@ -406,7 +406,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const myBet = myPlayer?.currentBet ?? 0n
   const mySeatIndex = myPlayer?.seatIndex ?? 0
   const activeTurnPlayer = allPlayers.find(p => p.seatIndex === activePlayerIdx)
-  const isMyTurn = status >= 2 && status <= 5 && isActiveInHand && activeTurnPlayer?.addr?.toLowerCase() === address?.toLowerCase()
+  const canActThisStreet = isActiveInHand && myStake > 0n
+  const isMyTurn = status >= 2 && status <= 5 && canActThisStreet && activeTurnPlayer?.addr?.toLowerCase() === address?.toLowerCase()
 
   const [holeCards, setHoleCards] = useState<[number, number] | null>(null)
   useEffect(() => {

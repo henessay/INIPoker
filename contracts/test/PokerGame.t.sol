@@ -479,6 +479,42 @@ contract PokerGameTest is Test {
         assertEq(chips, 0, "All-in means zero chips");
     }
 
+    function test_T33a_allIn_call_autoRunsBoardToShowdown() public {
+        _join(alice, 4 ether);
+        _join(bob, 10 ether);
+        _commitTwo();
+        _deal();
+
+        // Heads-up on this table: after the first hand starts, Alice is the
+        // preflop actor. She shoves for the rest of her stack, Bob calls, and
+        // the contract should immediately run out the remaining board because
+        // no further betting decisions are possible.
+        vm.prank(alice);
+        game.playerAction(tableId, PokerLib.Action.AllIn, 0);
+
+        vm.prank(bob);
+        game.playerAction(tableId, PokerLib.Action.Call, 0);
+
+        (
+            ,
+            PokerLib.GameStatus status,
+            ,
+            ,
+            ,
+            ,
+            ,
+            uint8 communityCount,
+            ,
+            ,
+            uint8 saltsRevealed
+        ) = game.getSession(tableId);
+
+        saltsRevealed;
+
+        assertEq(uint8(status), uint8(PokerLib.GameStatus.Showdown), "All-in call should auto-run to showdown");
+        assertEq(communityCount, 5, "Board should be fully revealed");
+    }
+
     function test_T34_revert_checkWhenBetExists() public {
         _seatCommitDeal2();
         (, , , uint8 dealer,,,,,,, ) = game.getSession(tableId);

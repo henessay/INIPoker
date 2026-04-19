@@ -790,6 +790,18 @@ contract PokerGame is IVRFConsumer {
         }
 
         if (_isRoundComplete(tableId)) {
+            // If at most one active player still has chips, no further betting
+            // decisions remain. Automatically run out the remaining board all
+            // the way to showdown instead of assigning another meaningless turn.
+            if (_countActiveWithChips(tableId) <= 1) {
+                while (s.status >= PokerLib.GameStatus.PreFlop && s.status <= PokerLib.GameStatus.River) {
+                    _advanceRound(tableId);
+                    if (s.status == PokerLib.GameStatus.Showdown) {
+                        break;
+                    }
+                }
+                return;
+            }
             _advanceRound(tableId);
             return;
         }
@@ -847,6 +859,14 @@ contract PokerGame is IVRFConsumer {
         Session storage s = sessions[tableId];
         for (uint8 i = 0; i < s.playerCount; i++) {
             if (playerStates[tableId][seatMap[tableId][i]].isActive) count++;
+        }
+    }
+
+    function _countActiveWithChips(uint256 tableId) internal view returns (uint8 count) {
+        Session storage s = sessions[tableId];
+        for (uint8 i = 0; i < s.playerCount; i++) {
+            PlayerState storage p = playerStates[tableId][seatMap[tableId][i]];
+            if (p.isActive && p.chips > 0) count++;
         }
     }
 
