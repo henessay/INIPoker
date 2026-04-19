@@ -520,6 +520,21 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (watchdogTimerRef.current) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null }
   }, [sessionAddr, address, tableId])
 
+  // If the table has already moved back to Waiting/Settled, any stale
+  // "Revealing..." / "Evaluating..." UI from the previous showdown should be
+  // cleared immediately so the next-hand auto loop can start from a clean slate.
+  useEffect(() => {
+    if (status !== 0 && status !== 7) return
+    autoBusyRef.current = false
+    lastAutoKeyRef.current = null
+    if (localStatus && /Revealing|Evaluating|Settling/i.test(localStatus)) {
+      setLocalStatus(null)
+    }
+    if (localError && /revealHoleCardsFor|evaluateShowdown/i.test(localError)) {
+      setLocalError(null)
+    }
+  }, [localError, localStatus, status])
+
   const doAction = useCallback(async (fnName: string, args: unknown[], label: string) => {
     setActionPending(true)
     setLocalError(null)
@@ -594,6 +609,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         if ((onChainStatus !== 0 && onChainStatus !== 7) || vrfPendingOnChain) {
           console.log('[AUTO] deal benign race — on-chain status=', onChainStatus, 'vrfPending=', vrfPendingOnChain)
           addLog('Hand started (by peer)')
+          setLocalError(null)
+          setLocalStatus(null)
+          autoBusyRef.current = false
+          lastAutoKeyRef.current = null
+          setTimeout(refreshAll, 250)
           return
         }
       } catch (probeErr) {
@@ -631,7 +651,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           publicClient.readContract({
             address: POKER_GAME_ADDRESS,
             abi: POKER_GAME_ABI,
-            functionName: 'playerStates',
+            functionName: 'getPlayerState',
             args: [tableId, address],
           }) as Promise<readonly unknown[]>,
           publicClient.readContract({
@@ -641,10 +661,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
             args: [tableId],
           }) as Promise<readonly unknown[]>,
         ])
-        const hasRevealedOnChain = Boolean(ps[9]) // PlayerState.hasRevealed at index 9
+        const hasRevealedOnChain = Boolean(ps[6]) // getPlayerState.hasRevealed
         const onChainStatus = Number(sess[5])     // Session.status
         if (hasRevealedOnChain || onChainStatus !== 6) {
           console.log('[AUTO] reveal benign race — hasRevealed=', hasRevealedOnChain, 'status=', onChainStatus)
+          setLocalError(null)
+          setLocalStatus(null)
+          autoBusyRef.current = false
+          lastAutoKeyRef.current = null
+          setTimeout(refreshAll, 250)
           return
         }
       } catch (probeErr) {
@@ -683,6 +708,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         if (onChainStatus !== 6) {
           console.log('[AUTO] evaluateShowdown benign race — on-chain status=', onChainStatus)
           addLog('Showdown resolved (by peer)')
+          setLocalError(null)
+          setLocalStatus(null)
+          autoBusyRef.current = false
+          lastAutoKeyRef.current = null
+          setTimeout(refreshAll, 250)
           return
         }
       } catch (probeErr) {
@@ -989,7 +1019,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         // No local salt — plain commit path.
       }
       // Short pause after showdown so players can read the winner banner
-      const delay = status === 7 ? 5000 : 0
+      const delay = status === 7 ? 1200 : 0
       lastAutoKeyRef.current = stateKey
       autoBusyRef.current = true
       setTimeout(() => {
@@ -1384,4 +1414,3 @@ const st = {
   modal: { background: '#0F0F0F', border: '1px solid #1C1C1C', borderRadius: '8px', padding: '20px', maxWidth: '380px', width: '90%' },
   modalTitle: { fontSize: '15px', fontWeight: 700, color: '#E8DCC8', margin: 0 },
 }
-
