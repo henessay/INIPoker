@@ -315,7 +315,7 @@ contract PokerGame is IVRFConsumer {
 
         s.deckCursor = cursor;
         s.status = PokerLib.GameStatus.PreFlop;
-        s.activePlayerIndex = _nextActiveSeat(tableId, (s.dealerIndex + 2) % s.playerCount);
+        s.activePlayerIndex = _nextActingSeat(tableId, (s.dealerIndex + 2) % s.playerCount);
         s.lastActionBlock = block.number;
 
         emit StatusChanged(tableId, PokerLib.GameStatus.Dealing, PokerLib.GameStatus.PreFlop);
@@ -431,6 +431,8 @@ contract PokerGame is IVRFConsumer {
             playerStates[tableId][winners[i]].chips += winnerPayout;
             emit ShowdownResult(tableId, winners[i], bestRank, winnerPayout);
         }
+
+        _pruneBustedPlayers(tableId);
 
         emit StatusChanged(tableId, prev, PokerLib.GameStatus.Settled);
     }
@@ -790,23 +792,15 @@ contract PokerGame is IVRFConsumer {
         }
 
         if (_isRoundComplete(tableId)) {
-            // If at most one active player still has chips, no further betting
-            // decisions remain. Automatically run out the remaining board all
-            // the way to showdown instead of assigning another meaningless turn.
             if (_countActiveWithChips(tableId) <= 1) {
-                while (s.status >= PokerLib.GameStatus.PreFlop && s.status <= PokerLib.GameStatus.River) {
-                    _advanceRound(tableId);
-                    if (s.status == PokerLib.GameStatus.Showdown) {
-                        break;
-                    }
-                }
+                _runoutToShowdown(tableId);
                 return;
             }
             _advanceRound(tableId);
             return;
         }
 
-        s.activePlayerIndex = _nextActiveSeat(tableId, s.activePlayerIndex);
+        s.activePlayerIndex = _nextActingSeat(tableId, s.activePlayerIndex);
     }
 
     function _isRoundComplete(uint256 tableId) internal view returns (bool) {
@@ -815,8 +809,9 @@ contract PokerGame is IVRFConsumer {
             address player = seatMap[tableId][i];
             PlayerState storage p = playerStates[tableId][player];
             if (!p.isActive) continue;
+            if (p.chips == 0) continue;
             if (p.lastAction == PokerLib.Action.None) return false;
-            if (p.chips > 0 && p.currentBet < s.currentBet) return false;
+            if (p.currentBet < s.currentBet) return false;
         }
         return true;
     }
@@ -838,15 +833,21 @@ contract PokerGame is IVRFConsumer {
         if (s.status == PokerLib.GameStatus.PreFlop) {
             s.status = PokerLib.GameStatus.Flop;
             _revealCommunity(tableId, 3);
-            s.activePlayerIndex = _nextActiveSeat(tableId, s.dealerIndex);
+            if (_countActiveWithChips(tableId) > 1) {
+                s.activePlayerIndex = _nextActingSeat(tableId, s.dealerIndex);
+            }
         } else if (s.status == PokerLib.GameStatus.Flop) {
             s.status = PokerLib.GameStatus.Turn;
             _revealCommunity(tableId, 1);
-            s.activePlayerIndex = _nextActiveSeat(tableId, s.dealerIndex);
+            if (_countActiveWithChips(tableId) > 1) {
+                s.activePlayerIndex = _nextActingSeat(tableId, s.dealerIndex);
+            }
         } else if (s.status == PokerLib.GameStatus.Turn) {
             s.status = PokerLib.GameStatus.River;
             _revealCommunity(tableId, 1);
-            s.activePlayerIndex = _nextActiveSeat(tableId, s.dealerIndex);
+            if (_countActiveWithChips(tableId) > 1) {
+                s.activePlayerIndex = _nextActingSeat(tableId, s.dealerIndex);
+            }
         } else if (s.status == PokerLib.GameStatus.River) {
             s.status = PokerLib.GameStatus.Showdown;
         }
@@ -888,9 +889,20 @@ contract PokerGame is IVRFConsumer {
         PokerLib.GameStatus prev = s.status;
         s.status = PokerLib.GameStatus.Settled;
         _resetSalts(tableId);
+        _pruneBustedPlayers(tableId);
 
         emit ShowdownResult(tableId, winner, 0, payout);
         emit StatusChanged(tableId, prev, PokerLib.GameStatus.Settled);
+    }
+
+    function _runoutToShowdown(uint256 tableId) internal {
+        Session storage s = sessions[tableId];
+        while (s.status >= PokerLib.GameStatus.PreFlop && s.status <= PokerLib.GameStatus.River) {
+            _advanceRound(tableId);
+            if (s.status == PokerLib.GameStatus.Showdown) {
+                break;
+            }
+        }
     }
 
     function _resetSalts(uint256 tableId) internal {
@@ -963,6 +975,18 @@ contract PokerGame is IVRFConsumer {
         for (uint8 i = 0; i < s.playerCount; i++) {
             address player = seatMap[tableId][seat];
             if (playerStates[tableId][player].isActive) return seat;
+            seat = (seat + 1) % s.playerCount;
+        }
+        return fromSeat;
+    }
+
+    function _nextActingSeat(uint256 tableId, uint8 fromSeat) internal view returns (uint8) {
+        Session storage s = sessions[tableId];
+        uint8 seat = (fromSeat + 1) % s.playerCount;
+        for (uint8 i = 0; i < s.playerCount; i++) {
+            address player = seatMap[tableId][seat];
+            PlayerState storage p = playerStates[tableId][player];
+            if (p.isActive && p.chips > 0) return seat;
             seat = (seat + 1) % s.playerCount;
         }
         return fromSeat;

@@ -1,6 +1,6 @@
 export const POKER_GAME_ADDRESS = (
   import.meta.env.VITE_POKER_GAME_ADDRESS ??
-  '0xeCB7Ff40f3C6058785Ca97d95bb6AC4400cB842d'
+  '0xadC56B9DeF700F07C20D271Ec389Ad19e9B9a6C3'
 ) as `0x${string}`
 
 export const POKER_GAME_ABI = [

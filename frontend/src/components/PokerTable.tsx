@@ -405,6 +405,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const myStake = myPlayer?.chips ?? 0n
   const myBet = myPlayer?.currentBet ?? 0n
   const mySeatIndex = myPlayer?.seatIndex ?? 0
+  const chippedPlayerCount = allPlayers.filter(p => p.chips > 0n).length
   const activeTurnPlayer = allPlayers.find(p => p.seatIndex === activePlayerIdx)
   const canActThisStreet = isActiveInHand && myStake > 0n
   const isMyTurn = status >= 2 && status <= 5 && canActThisStreet && activeTurnPlayer?.addr?.toLowerCase() === address?.toLowerCase()
@@ -1195,14 +1196,16 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
                     <span style={{ fontSize: '10px', color: '#E8C07E' }}>The mock VRF may be misconfigured (autoFulfill=false) or vrfProvider address doesn't match.</span>
                   </div>
                 )}
-                {status === 0 && playerCount < 2 && <div style={st.potHint}>Waiting for players... ({playerCount}/2)</div>}
-                {(status === 0 || status === 7) && playerCount >= 2 && saltsCommitted < playerCount && (
+                {(status === 0 || status === 7) && chippedPlayerCount < 2 && (
+                  <div style={st.potHint}>Waiting for players... ({chippedPlayerCount}/2)</div>
+                )}
+                {(status === 0 || status === 7) && playerCount >= 2 && chippedPlayerCount >= 2 && saltsCommitted < playerCount && (
                   <div style={{ ...st.potHint, color: '#7ECFB3' }}>Waiting for all salts ({saltsCommitted}/{playerCount})...</div>
                 )}
-                {(status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount && !vrfPending && (
+                {(status === 0 || status === 7) && playerCount >= 2 && chippedPlayerCount >= 2 && saltsCommitted >= playerCount && !vrfPending && (
                   <div style={{ ...st.potHint, color: '#E8C07E' }}>Ready to request deal...</div>
                 )}
-                {(status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount && vrfPending && (
+                {(status === 0 || status === 7) && playerCount >= 2 && chippedPlayerCount >= 2 && saltsCommitted >= playerCount && vrfPending && (
                   <div style={{ ...st.potHint, color: '#E8C07E' }}>Requesting deal...</div>
                 )}
               </div>
