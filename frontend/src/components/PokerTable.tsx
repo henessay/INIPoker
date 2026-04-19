@@ -599,8 +599,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       await sWrite('revealHoleCardsFor', [tableId, address, found.value])
       addLog('Cards revealed')
     } catch (err: any) {
-      const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
-      setLocalError(msg)
+      const msg = (err.shortMessage ?? err.message ?? String(err))
+      if (/Not showdown|AlreadyRevealed|reverted/i.test(msg)) {
+        console.log('[AUTO] reveal race — state already advanced, ignoring')
+        return
+      }
+      setLocalError(msg.slice(0, 180))
       throw err
     } finally {
       setActionPending(false)
@@ -615,8 +619,19 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       await sWrite('evaluateShowdown', [tableId], undefined, 800_000n)
       addLog('Showdown resolved')
     } catch (err: any) {
-      const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
-      setLocalError(msg)
+      const msg = (err.shortMessage ?? err.message ?? String(err))
+      // Race: the OTHER client already called evaluateShowdown and advanced
+      // the table out of Showdown status. Our tx then reverts with "Not showdown".
+      // Also handle wagmi-side "reverted" where the underlying cause is status mismatch.
+      const isLateDup = /Not showdown|reverted/i.test(msg)
+      if (isLateDup) {
+        console.log('[AUTO] evaluateShowdown race — other client already settled, ignoring')
+        addLog('Showdown resolved (by peer)')
+        // Don't surface as an error. Don't rethrow — the state has already
+        // advanced to Settled; auto-loop should move on to next-hand commit.
+        return
+      }
+      setLocalError(msg.slice(0, 180))
       throw err
     } finally {
       setActionPending(false)
