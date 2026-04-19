@@ -589,8 +589,6 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     const found = lookupSalt()
     if (!found) {
       console.warn('[REVEAL] no salt found for handId', handId, 'expected', expectedHandId)
-      // Throw so auto loop clears lastAutoKeyRef and retries; meanwhile a
-      // teammate's reveal may still fire or the other side re-commits.
       throw new Error('Salt not found for this hand')
     }
     setActionPending(true)
@@ -600,17 +598,43 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       addLog('Cards revealed')
     } catch (err: any) {
       const msg = (err.shortMessage ?? err.message ?? String(err))
-      if (/Not showdown|AlreadyRevealed|reverted/i.test(msg)) {
-        console.log('[AUTO] reveal race — state already advanced, ignoring')
-        return
+      // Before treating this as a harmless race, verify on-chain that EITHER:
+      //   (a) I'm already marked hasRevealed=true, OR
+      //   (b) status has moved past Showdown (i.e. Settled/Waiting),
+      // which means a peer really did advance the state. Otherwise the revert
+      // is a genuine failure and must propagate so auto-loop retries.
+      try {
+        const [ps, sess] = await Promise.all([
+          publicClient.readContract({
+            address: POKER_GAME_ADDRESS,
+            abi: POKER_GAME_ABI,
+            functionName: 'playerStates',
+            args: [tableId, address],
+          }) as Promise<readonly unknown[]>,
+          publicClient.readContract({
+            address: POKER_GAME_ADDRESS,
+            abi: POKER_GAME_ABI,
+            functionName: 'sessions',
+            args: [tableId],
+          }) as Promise<readonly unknown[]>,
+        ])
+        const hasRevealedOnChain = Boolean(ps[9]) // PlayerState.hasRevealed at index 9
+        const onChainStatus = Number(sess[5])     // Session.status
+        if (hasRevealedOnChain || onChainStatus !== 6) {
+          console.log('[AUTO] reveal benign race — hasRevealed=', hasRevealedOnChain, 'status=', onChainStatus)
+          return
+        }
+      } catch (probeErr) {
+        console.warn('[REVEAL] probe after revert failed:', probeErr)
       }
+      // Genuine failure — surface and rethrow so auto-loop retries.
       setLocalError(msg.slice(0, 180))
       throw err
     } finally {
       setActionPending(false)
       setTimeout(refreshAll, 1500)
     }
-  }, [address, addLog, refreshAll, sWrite, lookupSalt, tableId, handId, expectedHandId])
+  }, [address, addLog, refreshAll, sWrite, lookupSalt, tableId, handId, expectedHandId, publicClient])
 
   const handleEvaluate = useCallback(async () => {
     setActionPending(true)
@@ -620,16 +644,26 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       addLog('Showdown resolved')
     } catch (err: any) {
       const msg = (err.shortMessage ?? err.message ?? String(err))
-      // Race: the OTHER client already called evaluateShowdown and advanced
-      // the table out of Showdown status. Our tx then reverts with "Not showdown".
-      // Also handle wagmi-side "reverted" where the underlying cause is status mismatch.
-      const isLateDup = /Not showdown|reverted/i.test(msg)
-      if (isLateDup) {
-        console.log('[AUTO] evaluateShowdown race — other client already settled, ignoring')
-        addLog('Showdown resolved (by peer)')
-        // Don't surface as an error. Don't rethrow — the state has already
-        // advanced to Settled; auto-loop should move on to next-hand commit.
-        return
+      // Only treat as harmless race if on-chain status has actually advanced
+      // out of Showdown (to Settled or Waiting). Otherwise rethrow so auto-loop
+      // sees the failure, clears locks, and retries.
+      try {
+        const sess = await publicClient.readContract({
+          address: POKER_GAME_ADDRESS,
+          abi: POKER_GAME_ABI,
+          functionName: 'sessions',
+          args: [tableId],
+        }) as readonly unknown[]
+        const onChainStatus = Number(sess[5])
+        // status 0=Waiting, 6=Showdown, 7=Settled. Anything other than Showdown
+        // means a peer already advanced the hand.
+        if (onChainStatus !== 6) {
+          console.log('[AUTO] evaluateShowdown benign race — on-chain status=', onChainStatus)
+          addLog('Showdown resolved (by peer)')
+          return
+        }
+      } catch (probeErr) {
+        console.warn('[EVALUATE] probe after revert failed:', probeErr)
       }
       setLocalError(msg.slice(0, 180))
       throw err
@@ -637,7 +671,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       setActionPending(false)
       setTimeout(refreshAll, 1500)
     }
-  }, [addLog, refreshAll, sWrite, tableId])
+  }, [addLog, refreshAll, sWrite, tableId, publicClient])
 
   const handleSitDown = async (buyIn: number) => {
     if (!address || !sessionKey) return
