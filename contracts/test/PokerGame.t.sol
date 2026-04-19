@@ -853,5 +853,55 @@ contract PokerGameTest is Test {
         emit log_named_uint("playerAction(Fold) gas", used);
         assertTrue(used < 150_000, "Fold < 150k");
     }
-}
+function test_T61_forceShowdownTimeout_recoversStuckShowdown() public {
+        _join(alice, 4 ether);
+        _join(bob, 10 ether);
+        _commitTwo();
+        _deal();
 
+        // Alice all-in, Bob calls -> auto runout to Showdown.
+        vm.prank(alice);
+        game.playerAction(tableId, PokerLib.Action.AllIn, 0);
+        vm.prank(bob);
+        game.playerAction(tableId, PokerLib.Action.Call, 0);
+
+        ( , PokerLib.GameStatus s0, , , , , , , , , ) = game.getSession(tableId);
+        assertEq(uint8(s0), uint8(PokerLib.GameStatus.Showdown));
+
+        // Nobody reveals. Before timeout, forceShowdownTimeout reverts.
+        vm.expectRevert();
+        game.forceShowdownTimeout(tableId);
+
+        // Roll block number past the timeout window.
+        vm.roll(block.number + 100);
+
+        // Now anyone can kick it. Both are unrevealed -> both folded ->
+        // activeCount==0 -> pot split path; hand ends Settled.
+        game.forceShowdownTimeout(tableId);
+
+        ( , PokerLib.GameStatus s1, , , , , , , , , ) = game.getSession(tableId);
+        assertEq(uint8(s1), uint8(PokerLib.GameStatus.Settled), "Stuck showdown must recover to Settled");
+    }
+
+    function test_T62_forceShowdownTimeout_oneRevealedWins() public {
+        _join(alice, 4 ether);
+        _join(bob, 10 ether);
+        _commitTwo();
+        _deal();
+
+        vm.prank(alice);
+        game.playerAction(tableId, PokerLib.Action.AllIn, 0);
+        vm.prank(bob);
+        game.playerAction(tableId, PokerLib.Action.Call, 0);
+
+        // Bob reveals, Alice does not.
+        vm.prank(bob);
+        game.revealHoleCards(tableId, BOB_SALT);
+
+        vm.roll(block.number + 100);
+        game.forceShowdownTimeout(tableId);
+
+        ( , PokerLib.GameStatus s1, , , , , , , , , ) = game.getSession(tableId);
+        assertEq(uint8(s1), uint8(PokerLib.GameStatus.Settled), "One revealed vs one unrevealed must settle via last-standing");
+    }
+}

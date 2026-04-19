@@ -831,6 +831,23 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     }
   }, [addLog, refreshAll, sWrite, tableId, publicClient])
 
+  // Break a stuck showdown on-chain. Anyone can call it; the contract checks
+  // that at least actionTimeout blocks have passed since lastActionBlock.
+  const handleForceShowdownTimeout = useCallback(async () => {
+    setActionPending(true)
+    setLocalError(null)
+    try {
+      await sWrite('forceShowdownTimeout', [tableId], undefined, 600_000n)
+      addLog('Forced showdown timeout — hand resolved')
+    } catch (err: any) {
+      const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 220)
+      setLocalError(msg)
+    } finally {
+      setActionPending(false)
+      setTimeout(refreshAll, 1500)
+    }
+  }, [addLog, refreshAll, sWrite, tableId])
+
   const handleSitDown = async (buyIn: number) => {
     if (!address || !sessionKey) return
     setLocalError(null)
@@ -854,14 +871,49 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         functionName: 'getPlayers',
         args: [tableId],
       }) as readonly `0x${string}`[]
-      if (onChainPlayers.some(p => p.toLowerCase() === address.toLowerCase())) {
-        setSessionStatus('Already seated - reattaching session')
+      const iAmOnChain = onChainPlayers.some(p => p.toLowerCase() === address.toLowerCase())
+      // Reattach is ONLY the right thing if I'm still holding chips on this
+      // seat — i.e., the session was dropped mid-hand and wagmi hasn't caught
+      // up. If my on-chain stack is 0 (busted, waiting for prune) or I want
+      // to buy back in with a new amount, we must NOT silently reattach —
+      // we need to leave, then rejoin with the fresh buy-in.
+      let iHaveChipsOnChain = false
+      if (iAmOnChain) {
+        try {
+          const ps = await publicClient.readContract({
+            address: POKER_GAME_ADDRESS,
+            abi: POKER_GAME_ABI,
+            functionName: 'getPlayerState',
+            args: [tableId, address],
+          }) as readonly unknown[]
+          // getPlayerState returns (stake, currentBet, lastAction, isActive, seatIndex, holeCommitment, hasRevealed, handRank)
+          iHaveChipsOnChain = (ps[0] as bigint) > 0n
+        } catch {}
+      }
+      console.log('[SIT-DOWN] iAmOnChain=', iAmOnChain, 'iHaveChipsOnChain=', iHaveChipsOnChain)
+      if (iAmOnChain && iHaveChipsOnChain) {
+        setSessionStatus('Already seated with chips — reattaching session')
         setBuyInOpen(false)
         addLog('Reattached to existing seat')
         setSessionStatus('')
         refreshAll()
         setSittingDown(false)
         return
+      }
+      // I'm on-chain but stack=0 (busted). Release the seat first, then join
+      // fresh with the chosen buy-in. The contract may have already pruned
+      // me; NotSeated revert is fine.
+      if (iAmOnChain && !iHaveChipsOnChain) {
+        console.log('[SIT-DOWN] busted seat detected, releasing before fresh join')
+        setSessionStatus('Releasing busted seat...')
+        try {
+          await sWrite('leaveTableFor', [tableId, address], undefined, 500_000n)
+        } catch (leaveErr: any) {
+          const m = String(leaveErr?.message ?? leaveErr)
+          if (!/NotSeated|not seated/i.test(m)) {
+            console.warn('[SIT-DOWN] leave-before-join failed, continuing:', m)
+          }
+        }
       }
 
       const onChainSession = await publicClient.readContract({
@@ -1352,6 +1404,24 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (vrfStale) setVrfStale(false)
   }, [status, vrfPending, vrfStale])
 
+  // Stuck-showdown detector: if we've been in Showdown (status=6) for more
+  // than 20 seconds and the hand still hasn't settled, the "Force timeout"
+  // CTA appears. The contract also enforces actionTimeout blocks via
+  // forceShowdownTimeout, so the tx will revert if called too early.
+  const [showdownStuck, setShowdownStuck] = useState(false)
+  const showdownEnteredAtRef = useRef<number>(0)
+  useEffect(() => {
+    if (status === 6) {
+      if (showdownEnteredAtRef.current === 0) showdownEnteredAtRef.current = Date.now()
+      const interval = setInterval(() => {
+        if (Date.now() - showdownEnteredAtRef.current > 20_000) setShowdownStuck(true)
+      }, 1000)
+      return () => clearInterval(interval)
+    }
+    showdownEnteredAtRef.current = 0
+    if (showdownStuck) setShowdownStuck(false)
+  }, [status, showdownStuck])
+
   const [timeLeft, setTimeLeft] = useState(45)
   const turnStartRef = useRef<number>(0)
   useEffect(() => {
@@ -1534,6 +1604,17 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
               {isSeated && <button onClick={handleLeaveTable} style={st.btnLeave} disabled={leaving || txBusy || rebuying}>{leaving ? 'Leaving...' : 'Leave Table'}</button>}
 
+              {status === 6 && showdownStuck && (
+                <button
+                  onClick={handleForceShowdownTimeout}
+                  style={st.btnHelper}
+                  disabled={txBusy}
+                  title="Force-resolve a stuck showdown. Requires the on-chain timeout window to have passed; if called too early the tx reverts."
+                >
+                  {'\u26A0'} Force timeout
+                </button>
+              )}
+
               {/* Rebuy flow for busted player (still seated, auto-leave in progress) */}
               {canRebuyNow && !needsRoomDeposit && (
                 <button
@@ -1561,19 +1642,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
                 </>
               )}
               {isBustedAtTable && !handIsIdle && (
-                <>
-                  <span style={{ color: '#888', fontSize: '12px' }}>
-                    Rebuy available after hand settles
-                  </span>
-                  <button
-                    onClick={() => setCashierOpen(true)}
-                    style={st.btnHelper}
-                    disabled={txBusy}
-                    title="Top up your room balance while you wait"
-                  >
-                    {'\u229E'} Cashier
-                  </button>
-                </>
+                <span style={{ color: '#888', fontSize: '12px' }}>
+                  You lost this hand. Rebuy / Deposit options will appear after it settles.
+                </span>
               )}
 
               {status >= 2 && status <= 5 && isActiveInHand && isMyTurn && (

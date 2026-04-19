@@ -355,6 +355,64 @@ contract PokerGame is IVRFConsumer {
         _advanceGame(tableId);
     }
 
+    /// @notice Break a stuck showdown. If actionTimeout blocks have passed
+    ///         since lastActionBlock and there are still active players who
+    ///         haven't revealed, mark them folded. If one active remains the
+    ///         table settles via last-standing. If none remain the pot is
+    ///         split among those who had committed (degenerate — should not
+    ///         happen in normal play). Anyone can call this.
+    function forceShowdownTimeout(uint256 tableId) external tableExists(tableId) {
+        Session storage s = sessions[tableId];
+        require(s.status == PokerLib.GameStatus.Showdown, "Not showdown");
+        if (block.number < s.lastActionBlock + s.actionTimeout) {
+            revert TimeoutNotReached(block.number, s.lastActionBlock + s.actionTimeout);
+        }
+
+        // Fold anyone still active who hasn't revealed their hand.
+        for (uint8 i = 0; i < s.playerCount; i++) {
+            address player = seatMap[tableId][i];
+            PlayerState storage p = playerStates[tableId][player];
+            if (p.isActive && !p.hasRevealed) {
+                p.isActive = false;
+                p.lastAction = PokerLib.Action.Fold;
+                emit PlayerTimedOut(tableId, player);
+            }
+        }
+
+        s.lastActionBlock = block.number;
+
+        uint8 activeCount = _countActive(tableId);
+        if (activeCount == 1) {
+            _settleLastStanding(tableId);
+        } else if (activeCount == 0) {
+            // Degenerate: nobody revealed. Return pot to room balances
+            // proportionally to what each player put in (recorded as
+            // currentBet for the current street — best-effort refund).
+            uint256 pot = s.pot;
+            s.pot = 0;
+            uint256 totalStake = 0;
+            for (uint8 i = 0; i < s.playerCount; i++) {
+                totalStake += playerStates[tableId][seatMap[tableId][i]].currentBet;
+            }
+            if (totalStake > 0) {
+                for (uint8 i = 0; i < s.playerCount; i++) {
+                    address pl = seatMap[tableId][i];
+                    PlayerState storage pp = playerStates[tableId][pl];
+                    if (pp.currentBet > 0) {
+                        uint256 refund = (pot * pp.currentBet) / totalStake;
+                        pp.chips += refund;
+                    }
+                }
+            }
+            PokerLib.GameStatus prev = s.status;
+            s.status = PokerLib.GameStatus.Settled;
+            _resetSalts(tableId);
+            _pruneBustedPlayers(tableId);
+            emit StatusChanged(tableId, prev, PokerLib.GameStatus.Settled);
+        }
+        // else: 2+ still active and revealed — caller can now evaluateShowdown
+    }
+
     function revealHoleCards(uint256 tableId, bytes32 salt)
         external
         tableExists(tableId)

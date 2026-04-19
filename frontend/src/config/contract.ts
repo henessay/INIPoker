@@ -96,6 +96,7 @@ export const POKER_GAME_ABI = [
   { type: 'function', name: 'playerAction', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'action', type: 'uint8' }, { name: 'value', type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'playerActionFor', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'player', type: 'address' }, { name: 'action', type: 'uint8' }, { name: 'value', type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'forceTimeout', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'forceShowdownTimeout', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'revealHoleCards', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'salt', type: 'bytes32' }], outputs: [] },
   { type: 'function', name: 'revealHoleCardsFor', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'player', type: 'address' }, { name: 'salt', type: 'bytes32' }], outputs: [] },
   { type: 'function', name: 'evaluateShowdown', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
