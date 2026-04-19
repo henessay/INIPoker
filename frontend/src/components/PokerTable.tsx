@@ -1277,12 +1277,18 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         console.log('[AUTO-REVEAL-SKIP] activeNow < 2 — falls to evaluate branch below')
       } else if (!hasAnyUsableSalt) {
         console.warn('[AUTO-REVEAL-SKIP] salt missing for handId=', handId, 'expected=', expectedHandId)
-        // Surface this as an error so the user isn't left staring at a
-        // silent "Revealing..." forever. The only recoverable path is to
-        // leave the table — the salt is gone, and the on-chain commitment
-        // can no longer be proven.
         setDbgLastAction(`reveal-skip:no-salt h=${handId}`)
-        setLocalError(`Salt for hand ${handId} not found on this device. You can't reveal; other players may need to fold or timeout for this hand to settle.`)
+        // For a busted player (stack=0) the missing-salt situation is expected
+        // if they signed in fresh on this device — they already lost this hand
+        // anyway. Don't panic them with a red error. Just wait for settle.
+        if (myStake === 0n) {
+          setLocalStatus('You lost this hand. Waiting for it to settle...')
+        } else {
+          // For an actual-chips player with no salt: this is a genuine problem.
+          // Their commitment exists on-chain but the secret was lost locally;
+          // the hand will only resolve via fold/timeout from the other side.
+          setLocalError(`Salt for hand ${handId} not found on this device. Other players may need to fold or this hand will timeout.`)
+        }
       } else {
         runAuto(handleReveal)
         return
@@ -1508,33 +1514,36 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
               {!isSeated && sessionAccount && (
                 <>
-                  <button onClick={() => setBuyInOpen(true)} style={st.btnPrimary} disabled={txBusy}>{sittingDown ? 'Setting up...' : '\u2659 Sit Down'}</button>
+                  {parseFloat(gameBalance || '0') >= minBuyInFloat ? (
+                    <button onClick={() => setBuyInOpen(true)} style={st.btnPrimary} disabled={txBusy}>
+                      {sittingDown ? 'Setting up...' : '\u2659 Sit Down'}
+                    </button>
+                  ) : (
+                    <>
+                      <button onClick={() => setCashierOpen(true)} style={st.btnPrimary} disabled={txBusy} title="Room balance too low. Deposit from wallet first.">
+                        {'\u229E'} Deposit to Room
+                      </button>
+                      <span style={{ color: '#888', fontSize: '11px' }}>
+                        Need ≥ {minBuyInFloat.toFixed(2)} INIT to sit down
+                      </span>
+                    </>
+                  )}
                   <button onClick={handleCloseSession} style={st.btnLeave} disabled={txBusy}>Close Session</button>
                 </>
               )}
 
               {isSeated && <button onClick={handleLeaveTable} style={st.btnLeave} disabled={leaving || txBusy || rebuying}>{leaving ? 'Leaving...' : 'Leave Table'}</button>}
 
-              {/* Rebuy flow for busted player */}
+              {/* Rebuy flow for busted player (still seated, auto-leave in progress) */}
               {canRebuyNow && !needsRoomDeposit && (
-                <>
-                  <button
-                    onClick={handleRebuy}
-                    style={st.btnPrimary}
-                    disabled={rebuying || leaving || txBusy}
-                    title="Release your seat and buy back in from your room balance"
-                  >
-                    {rebuying ? 'Releasing seat...' : '\u2659 Rebuy'}
-                  </button>
-                  <button
-                    onClick={() => setCashierOpen(true)}
-                    style={st.btnHelper}
-                    disabled={txBusy}
-                    title="Top up your room balance before rebuying"
-                  >
-                    {'\u229E'} Cashier
-                  </button>
-                </>
+                <button
+                  onClick={handleRebuy}
+                  style={st.btnPrimary}
+                  disabled={rebuying || leaving || txBusy}
+                  title="Release your seat and buy back in from your room balance"
+                >
+                  {rebuying ? 'Releasing seat...' : '\u2659 Sit Down'}
+                </button>
               )}
               {canRebuyNow && needsRoomDeposit && (
                 <>
