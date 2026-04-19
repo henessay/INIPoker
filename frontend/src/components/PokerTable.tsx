@@ -430,6 +430,20 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const canActThisStreet = isActiveInHand && myStake > 0n
   const isMyTurn = status >= 2 && status <= 5 && canActThisStreet && activeTurnPlayer?.addr?.toLowerCase() === address?.toLowerCase()
 
+  // Busted / rebuy UX derived states.
+  // isBustedAtTable: I'm still seated on-chain but my stack is empty. The
+  // contract prunes zero-chip seats on next settle/_requestDeal, but there is
+  // a window where the player sees 0 INIT and needs a clear next step.
+  const isBustedAtTable = isSeated && myStake === 0n
+  // canRebuyNow: table must be in a safe phase to swap seats/buy in.
+  // 0=Waiting, 7=Settled. Mid-hand rebuy would be unsafe.
+  const handIsIdle = status === 0 || status === 7
+  const canRebuyNow = isBustedAtTable && handIsIdle
+  // needsRoomDeposit: even if we want to rebuy, we must have room balance
+  // covering at least the minimum buy-in (10 big blinds by convention).
+  const minBuyInFloat = bigBlind * 10
+  const needsRoomDeposit = canRebuyNow && parseFloat(gameBalance || '0') < minBuyInFloat
+
   const [holeCards, setHoleCards] = useState<[number, number] | null>(null)
   useEffect(() => {
     if (status >= 2 && status <= 7 && isSeated && deckSeed && deckSeed !== '0x0' && playerCount >= 2) {
@@ -475,6 +489,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const [sittingDown, setSittingDown] = useState(false)
   const [sessionStatus, setSessionStatus] = useState('')
   const [leaving, setLeaving] = useState(false)
+  const [rebuying, setRebuying] = useState(false)
 
   const txBusy = actionPending || sittingDown || leaving || mainWritePending
 
@@ -546,20 +561,25 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (watchdogTimerRef.current) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null }
   }, [sessionAddr, address, tableId])
 
-  // If the table has already moved back to Waiting/Settled, any stale
-  // "Revealing..." / "Evaluating..." UI from the previous showdown should be
-  // cleared immediately so the next-hand auto loop can start from a clean slate.
+  // If the table has already moved back to Waiting/Settled, OR we're in a
+  // last-man-standing Showdown (one active player), any stale reveal-related
+  // UI/errors should be cleared. Folded players in particular must never see
+  // a "revealHoleCardsFor would revert" banner — reveal doesn't apply to them.
   useEffect(() => {
-    if (status !== 0 && status !== 7) return
-    autoBusyRef.current = false
-    lastAutoKeyRef.current = null
+    const isLastStandingShowdown = status === 6 && allPlayers.filter(p => p.isActive).length === 1
+    const isSettledOrWaiting = status === 0 || status === 7
+    if (!isSettledOrWaiting && !isLastStandingShowdown) return
+    if (isSettledOrWaiting) {
+      autoBusyRef.current = false
+      lastAutoKeyRef.current = null
+    }
     if (localStatus && /Revealing|Evaluating|Settling/i.test(localStatus)) {
       setLocalStatus(null)
     }
-    if (localError && /revealHoleCardsFor|evaluateShowdown/i.test(localError)) {
+    if (localError && /revealHoleCardsFor|evaluateShowdown|Missing or invalid parameters|would revert/i.test(localError)) {
       setLocalError(null)
     }
-  }, [localError, localStatus, status])
+  }, [localError, localStatus, status, allPlayers])
 
   const doAction = useCallback(async (fnName: string, args: unknown[], label: string) => {
     setActionPending(true)
@@ -660,6 +680,29 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   const handleReveal = useCallback(async () => {
     if (!address) return
+    // Early guard: folded (or otherwise not-active) seats must NEVER try to
+    // reveal. The contract reverts revealHoleCardsFor with PlayerNotActive,
+    // which simulate surfaces as generic "Missing or invalid parameters" and
+    // keeps the auto-loop spinning on the same dead state. Cheap on-chain
+    // re-check so a stale wagmi cache doesn't let us through.
+    try {
+      const ps = await publicClient.readContract({
+        address: POKER_GAME_ADDRESS,
+        abi: POKER_GAME_ABI,
+        functionName: 'getPlayerState',
+        args: [tableId, address],
+      }) as readonly unknown[]
+      const isActiveOnChain = Boolean(ps[3])     // getPlayerState.isActive
+      const hasRevealedOnChain = Boolean(ps[6])  // getPlayerState.hasRevealed
+      if (!isActiveOnChain || hasRevealedOnChain) {
+        console.log('[REVEAL] skipped — isActive=', isActiveOnChain, 'hasRevealed=', hasRevealedOnChain)
+        return
+      }
+    } catch (probeErr) {
+      // If the probe itself fails (RPC glitch), fall through to the existing
+      // simulate preflight inside sWrite — it will still catch the revert.
+      console.warn('[REVEAL] pre-check failed, continuing:', probeErr)
+    }
     const found = lookupSalt()
     if (!found) {
       console.warn('[REVEAL] no salt found for handId', handId, 'expected', expectedHandId)
@@ -980,6 +1023,44 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     setLeaving(false)
   }
 
+  // Rebuy: the player is busted (stack=0) and wants to buy back in. The
+  // contract doesn't have a dedicated rebuy op, so we leave the seat (which
+  // refunds 0 chips to room balance — the player already had 0) and then
+  // open the BuyInModal which will trigger the normal join flow.
+  const handleRebuy = useCallback(async () => {
+    if (!sessionAccount || !address || !isSeated) return
+    if (!handIsIdle) {
+      setLocalError('Rebuy is only allowed between hands')
+      return
+    }
+    setRebuying(true)
+    setLocalError(null)
+    setLocalStatus('Releasing seat for rebuy...')
+    try {
+      // Try to release the seat. If the contract has already pruned us (busted
+      // seats are removed on settle / next deal), leaveTableFor will revert with
+      // NotSeated — that's fine, we can proceed straight to the buy-in modal.
+      try {
+        await sWrite('leaveTableFor', [tableId, address], undefined, 500_000n)
+        addLog('Seat released — choose rebuy amount')
+      } catch (leaveErr: any) {
+        const m = String(leaveErr?.message ?? leaveErr)
+        if (/NotSeated|not seated/i.test(m)) {
+          console.log('[REBUY] seat already pruned, proceeding to buy-in')
+        } else {
+          throw leaveErr
+        }
+      }
+      setLocalStatus(null)
+      refreshAll()
+      setBuyInOpen(true)
+    } catch (err: any) {
+      setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 220))
+      setLocalStatus(null)
+    }
+    setRebuying(false)
+  }, [sessionAccount, address, isSeated, handIsIdle, sWrite, tableId, addLog, refreshAll])
+
   const handleCloseSession = useCallback(() => {
     if (isSeated) return
     removeStoredValue(sessionKey)
@@ -1090,19 +1171,38 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     // SHOWDOWN PHASE (status===6)
     // Handle last-man-standing FIRST — if only one active player remains
     // (e.g. after a fold), the contract already switched status to Showdown
-    // but does NOT auto-settle. A folded seat cannot reveal, and the
-    // remaining active player has no incentive/obligation to reveal either.
-    // Trying `revealHoleCardsFor` here reverts (0x4f6184a8 from contract),
-    // which kept the auto-loop stuck retrying reveal and never calling
-    // evaluate/settle. Settle takes priority.
+    // but does NOT auto-settle. Use settleLastStanding directly — it's a
+    // dedicated path that does not require any reveal and always succeeds
+    // in this shape.
     if (status === 6) {
       const active = allPlayers.filter(p => p.isActive)
       if (active.length === 1) {
-        runAuto(handleEvaluate)  // evaluateShowdown handles last-standing path internally
+        runAuto(async () => {
+          try {
+            await sWrite('settleLastStanding', [tableId], undefined, 500_000n)
+            addLog('Hand settled (last standing)')
+          } catch (err: any) {
+            // Fallback for the rare case where settleLastStanding itself
+            // reverts (e.g. table already advanced): probe status.
+            try {
+              const sess = await publicClient.readContract({
+                address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI,
+                functionName: 'sessions', args: [tableId],
+              }) as readonly unknown[]
+              if (Number(sess[5]) !== 6) {
+                console.log('[AUTO] last-standing race — peer already settled')
+                addLog('Hand settled (by peer)')
+                return
+              }
+            } catch {}
+            throw err
+          }
+        })
         return
       }
     }
-    // Reveal: only when 2+ active remain and this seat hasn't revealed yet.
+    // Reveal: only when 2+ active remain and THIS seat hasn't revealed yet.
+    // The early-return guard inside handleReveal re-checks on-chain isActive.
     if (status === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
       const activeNow = allPlayers.filter(p => p.isActive)
       if (activeNow.length >= 2 && hasAnyUsableSalt) {
@@ -1214,6 +1314,21 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       {(localStatus || sessionStatus) && <div style={st.banner}>{'\u23F3'} {localStatus || sessionStatus}</div>}
       {localError && <div style={st.errBanner}>{localError}</div>}
       {isSeatedAsZombie && <div style={{ ...st.banner, color: '#E07070' }}>This hand has you folded. Your seat stays reserved until showdown settles.</div>}
+      {isBustedAtTable && !handIsIdle && (
+        <div style={{ ...st.banner, color: '#E8C07E' }}>
+          Your stack is empty. Rebuy available once the current hand settles.
+        </div>
+      )}
+      {isBustedAtTable && handIsIdle && !needsRoomDeposit && (
+        <div style={{ ...st.banner, color: '#E8C07E' }}>
+          You're busted (0 INIT). Click <b>Rebuy</b> to buy back in from your room balance, or <b>Leave Table</b> to return to the lobby.
+        </div>
+      )}
+      {isBustedAtTable && handIsIdle && needsRoomDeposit && (
+        <div style={{ ...st.banner, color: '#E07070' }}>
+          You're busted and your room balance is too low for the minimum buy-in ({minBuyInFloat.toFixed(2)} INIT). Open <b>Cashier</b> to deposit more, or leave the table.
+        </div>
+      )}
 
       <div style={st.body}>
         <div style={st.mainCol}>
@@ -1320,7 +1435,34 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
                 </>
               )}
 
-              {isSeated && <button onClick={handleLeaveTable} style={st.btnLeave} disabled={leaving || txBusy}>{leaving ? 'Leaving...' : 'Leave Table'}</button>}
+              {isSeated && <button onClick={handleLeaveTable} style={st.btnLeave} disabled={leaving || txBusy || rebuying}>{leaving ? 'Leaving...' : 'Leave Table'}</button>}
+
+              {/* Rebuy flow for busted player */}
+              {canRebuyNow && !needsRoomDeposit && (
+                <button
+                  onClick={handleRebuy}
+                  style={st.btnPrimary}
+                  disabled={rebuying || leaving || txBusy}
+                  title="Release your seat and buy back in from your room balance"
+                >
+                  {rebuying ? 'Releasing seat...' : '\u2659 Rebuy'}
+                </button>
+              )}
+              {canRebuyNow && needsRoomDeposit && (
+                <button
+                  onClick={() => setCashierOpen(true)}
+                  style={st.btnPrimary}
+                  disabled={txBusy}
+                  title="Your room balance is too low for the minimum buy-in. Deposit more to rebuy."
+                >
+                  {'\u229E'} Deposit to room
+                </button>
+              )}
+              {isBustedAtTable && !handIsIdle && (
+                <span style={{ color: '#888', fontSize: '12px' }}>
+                  Rebuy available after hand settles
+                </span>
+              )}
 
               {status >= 2 && status <= 5 && isActiveInHand && isMyTurn && (
                 <>
@@ -1349,9 +1491,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
                 </span>
               )}
 
-              {status === 6 && isSeated && myPlayer?.isActive && (
+              {status === 6 && isSeated && (
                 <span style={{ color: '#7ECFB3', fontSize: '12px' }}>
-                  {!myPlayer.hasRevealed ? '\u23F3 Revealing...' : '\u23F3 Evaluating...'}
+                  {!myPlayer?.isActive
+                    ? '\u23F3 Waiting for showdown to settle...'
+                    : allPlayers.filter(p => p.isActive).length === 1
+                      ? '\u23F3 Settling hand...'
+                      : !myPlayer.hasRevealed
+                        ? '\u23F3 Revealing...'
+                        : '\u23F3 Evaluating...'}
                 </span>
               )}
 
