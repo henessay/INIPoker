@@ -1095,6 +1095,40 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     setRebuying(false)
   }, [sessionAccount, address, isSeated, handIsIdle, sWrite, tableId, addLog, refreshAll])
 
+  // Auto-leave busted seats once the hand has settled. The contract prunes
+  // zero-chip seats on the next _requestDeal / settle-path, but users may
+  // see stale "seated with 0 INIT" state for a moment. Proactively call
+  // leaveTableFor so the player transitions into a clean off-table state
+  // with the proper post-loss CTAs (Sit Down / Deposit / Leave).
+  const autoLeaveFiredRef = useRef(false)
+  useEffect(() => {
+    // Reset the one-shot guard whenever we're no longer in the busted-settled
+    // window — e.g., user refunded / re-seated / new hand started.
+    if (!(isBustedAtTable && handIsIdle)) {
+      autoLeaveFiredRef.current = false
+      return
+    }
+    if (autoLeaveFiredRef.current) return
+    if (!sessionAccount || !address || rebuying || leaving || txBusy) return
+    autoLeaveFiredRef.current = true
+    console.log('[BUSTED] auto-releasing seat after settle')
+    sWrite('leaveTableFor', [tableId, address], undefined, 500_000n)
+      .then(() => {
+        addLog('Seat released — you can Sit Down / Rebuy or leave')
+        refreshAll()
+      })
+      .catch((err: any) => {
+        const m = String(err?.message ?? err)
+        if (/NotSeated|not seated/i.test(m)) {
+          // Contract already pruned us — that's the success path.
+          console.log('[BUSTED] seat already pruned by contract')
+        } else {
+          console.warn('[BUSTED] auto-leave failed:', m)
+          // Leave the flag tripped so we don't loop; the manual buttons still work.
+        }
+      })
+  }, [isBustedAtTable, handIsIdle, sessionAccount, address, rebuying, leaving, txBusy, sWrite, tableId, addLog, refreshAll])
+
   const handleCloseSession = useCallback(() => {
     if (isSeated) return
     removeStoredValue(sessionKey)
@@ -1562,13 +1596,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
               {status === 6 && isSeated && (
                 <span style={{ color: '#7ECFB3', fontSize: '12px' }}>
-                  {!myPlayer?.isActive
-                    ? '\u23F3 Waiting for showdown to settle...'
-                    : allPlayers.filter(p => p.isActive).length === 1
-                      ? '\u23F3 Settling hand...'
-                      : !myPlayer.hasRevealed
-                        ? '\u23F3 Revealing...'
-                        : '\u23F3 Evaluating...'}
+                  {isBustedAtTable
+                    ? '\u23F3 You lost this hand. Waiting for it to finish...'
+                    : !myPlayer?.isActive
+                      ? '\u23F3 Waiting for showdown to settle...'
+                      : allPlayers.filter(p => p.isActive).length === 1
+                        ? '\u23F3 Settling hand...'
+                        : !myPlayer.hasRevealed
+                          ? '\u23F3 Revealing...'
+                          : '\u23F3 Evaluating...'}
                 </span>
               )}
 
