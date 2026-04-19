@@ -571,18 +571,41 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (!address) return
     setActionPending(true)
     setLocalError(null)
+    console.log('[DEAL] sending requestDealFor table=', tableId, 'player=', address)
     try {
-      await sWrite('requestDealFor', [tableId, address], undefined, 800_000n)
+      const hash = await sWrite('requestDealFor', [tableId, address], undefined, 800_000n)
+      console.log('[DEAL] success hash=', hash)
       addLog('Dealing new hand')
     } catch (err: any) {
-      const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
-      setLocalError(msg)
+      const msg = (err.shortMessage ?? err.message ?? String(err))
+      console.warn('[DEAL] failed:', msg)
+      // Benign race: peer already fired requestDealFor. Verify on-chain that
+      // status advanced past Waiting/Settled (or vrfPending) before silently
+      // accepting. Otherwise rethrow so auto-loop clears lock and retries.
+      try {
+        const sess = await publicClient.readContract({
+          address: POKER_GAME_ADDRESS,
+          abi: POKER_GAME_ABI,
+          functionName: 'sessions',
+          args: [tableId],
+        }) as readonly unknown[]
+        const onChainStatus = Number(sess[5])
+        const vrfPendingOnChain = Boolean(sess[13])
+        if ((onChainStatus !== 0 && onChainStatus !== 7) || vrfPendingOnChain) {
+          console.log('[AUTO] deal benign race — on-chain status=', onChainStatus, 'vrfPending=', vrfPendingOnChain)
+          addLog('Hand started (by peer)')
+          return
+        }
+      } catch (probeErr) {
+        console.warn('[DEAL] probe after revert failed:', probeErr)
+      }
+      setLocalError(msg.slice(0, 180))
       throw err
     } finally {
       setActionPending(false)
       setTimeout(refreshAll, 1500)
     }
-  }, [address, addLog, refreshAll, sWrite, tableId])
+  }, [address, addLog, refreshAll, sWrite, tableId, publicClient])
 
   const handleReveal = useCallback(async () => {
     if (!address) return
@@ -810,8 +833,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         const found = lookupSalt()
         if (found) {
           setLocalStatus('Revealing cards...')
-          await sWrite('revealHoleCardsFor', [tableId, address, found.value])
-          await new Promise(r => setTimeout(r, 1500))
+          try {
+            await sWrite('revealHoleCardsFor', [tableId, address, found.value])
+            await new Promise(r => setTimeout(r, 1500))
+          } catch (e) {
+            console.warn('[LEAVE] reveal failed, trying to continue:', e)
+          }
         }
       }
 
@@ -836,19 +863,35 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           functionName: 'getPlayerState',
           args: [tableId, player],
         }))) as readonly any[]
+        const activeCount = states.filter(s => Boolean(s[3])).length
         const everyoneRevealed = states.every(state => !Boolean(state[3]) || Boolean(state[6]))
-        if (everyoneRevealed) {
+        if (activeCount === 1) {
+          // Last-man-standing: call settleLastStanding which does not require reveal.
+          setLocalStatus('Settling (last standing)...')
+          try {
+            await sWrite('settleLastStanding', [tableId], undefined, 500_000n)
+            await new Promise(r => setTimeout(r, 1500))
+          } catch (e) {
+            console.warn('[LEAVE] settleLastStanding failed, trying evaluate:', e)
+            try { await sWrite('evaluateShowdown', [tableId], undefined, 800_000n) } catch {}
+            await new Promise(r => setTimeout(r, 1500))
+          }
+        } else if (everyoneRevealed) {
           setLocalStatus('Settling showdown...')
-          await sWrite('evaluateShowdown', [tableId], undefined, 800_000n)
-          await new Promise(r => setTimeout(r, 1500))
-          latestSession = await publicClient.readContract({
-            address: POKER_GAME_ADDRESS,
-            abi: POKER_GAME_ABI,
-            functionName: 'sessions',
-            args: [tableId],
-          }) as readonly any[]
-          latestStatus = Number(latestSession[5])
+          try {
+            await sWrite('evaluateShowdown', [tableId], undefined, 800_000n)
+            await new Promise(r => setTimeout(r, 1500))
+          } catch (e) {
+            console.warn('[LEAVE] evaluate failed:', e)
+          }
         }
+        latestSession = await publicClient.readContract({
+          address: POKER_GAME_ADDRESS,
+          abi: POKER_GAME_ABI,
+          functionName: 'sessions',
+          args: [tableId],
+        }) as readonly any[]
+        latestStatus = Number(latestSession[5])
       }
 
       if (latestStatus !== 0 && latestStatus !== 7) {
@@ -1010,8 +1053,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
       refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, txBusy, lookupSalt])
 
-  // Watchdog: every 2s check if we've been stuck (autoBusyRef true) for >8s
-  // in the same on-chain state. If so, forcibly release the lock.
+  // Watchdog: every 2s check if we've been stuck. Two stall modes:
+  //   (1) autoBusyRef=true for >8s in same state — an action never completed
+  //   (2) autoBusyRef=false but lastAutoKeyRef locked on current state for >8s
+  //       — we "handled" this stateKey but state didn't progress, meaning
+  //       the action silently didn't actually change anything on-chain
+  // Either way: clear both refs and force a retry.
   const watchdogStateRef = useRef<{ key: string; at: number }>({ key: '', at: 0 })
   useEffect(() => {
     if (!isSeated || !sessionAccount) return
@@ -1022,14 +1069,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         watchdogStateRef.current = { key, at: now }
         return
       }
-      // Same state for how long?
       const stuckMs = now - watchdogStateRef.current.at
-      if (autoBusyRef.current && stuckMs > 8000) {
-        console.warn('[WATCHDOG] busy 8s in state', key, '- releasing lock')
+      const stuckBusy = autoBusyRef.current && stuckMs > 8000
+      const stuckLocked = !autoBusyRef.current && lastAutoKeyRef.current !== null && stuckMs > 8000
+      if (stuckBusy || stuckLocked) {
+        console.warn(`[WATCHDOG] stuck ${stuckMs}ms in state ${key} (busy=${autoBusyRef.current}, lockedKey=${lastAutoKeyRef.current}) — clearing both refs`)
         autoBusyRef.current = false
         lastAutoKeyRef.current = null
         refreshAll()
-        watchdogStateRef.current.at = now  // reset so we don't fire every 2s
+        watchdogStateRef.current.at = now
       }
     }, 2000)
     return () => clearInterval(interval)
