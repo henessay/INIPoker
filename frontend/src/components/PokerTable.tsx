@@ -906,13 +906,52 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       if (iAmOnChain && !iHaveChipsOnChain) {
         console.log('[SIT-DOWN] busted seat detected, releasing before fresh join')
         setSessionStatus('Releasing busted seat...')
+        let leaveSucceeded = false
+        let leaveErrorMsg: string | null = null
         try {
           await sWrite('leaveTableFor', [tableId, address], undefined, 500_000n)
+          leaveSucceeded = true
         } catch (leaveErr: any) {
           const m = String(leaveErr?.message ?? leaveErr)
-          if (!/NotSeated|not seated/i.test(m)) {
-            console.warn('[SIT-DOWN] leave-before-join failed, continuing:', m)
+          if (/NotSeated|not seated/i.test(m)) {
+            // Contract already pruned us; treat as success.
+            console.log('[SIT-DOWN] leave reverted NotSeated — seat already pruned, continuing')
+            leaveSucceeded = true
+          } else {
+            leaveErrorMsg = m
+            console.warn('[SIT-DOWN] leave-before-join failed:', m)
           }
+        }
+        // Verify on-chain state after the leave attempt. Even if the tx
+        // reported success, we must confirm the seat is actually freed —
+        // otherwise joinTableFor will revert with AlreadySeated and the
+        // user will experience a confusing "sat down then got bounced".
+        if (leaveSucceeded) {
+          try {
+            const playersAfter = await publicClient.readContract({
+              address: POKER_GAME_ADDRESS,
+              abi: POKER_GAME_ABI,
+              functionName: 'getPlayers',
+              args: [tableId],
+            }) as readonly `0x${string}`[]
+            if (playersAfter.some(p => p.toLowerCase() === address.toLowerCase())) {
+              leaveSucceeded = false
+              leaveErrorMsg = 'Seat still occupied after leave attempt'
+              console.warn('[SIT-DOWN] leave returned success but seat still on-chain — aborting join')
+            }
+          } catch {}
+        }
+        if (!leaveSucceeded) {
+          // Abort. Do NOT continue to join — that would either hit AlreadySeated
+          // or succeed into a bad state the user didn't intend.
+          setSessionStatus('')
+          setSittingDown(false)
+          setBuyInOpen(false)
+          const reason = /Active hand|active hand|Wrong phase/i.test(leaveErrorMsg ?? '')
+            ? 'Seat is still occupied on-chain and the hand hasn\'t settled yet. Wait for the current hand to finish, or use "Force timeout" if the showdown is stuck.'
+            : `Couldn't release your busted seat: ${(leaveErrorMsg ?? 'unknown error').slice(0, 200)}`
+          setLocalError(reason)
+          return
         }
       }
 
@@ -1410,17 +1449,35 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   // forceShowdownTimeout, so the tx will revert if called too early.
   const [showdownStuck, setShowdownStuck] = useState(false)
   const showdownEnteredAtRef = useRef<number>(0)
+  const forceAutoFiredRef = useRef<number>(0)
   useEffect(() => {
     if (status === 6) {
       if (showdownEnteredAtRef.current === 0) showdownEnteredAtRef.current = Date.now()
       const interval = setInterval(() => {
-        if (Date.now() - showdownEnteredAtRef.current > 20_000) setShowdownStuck(true)
+        const stuckFor = Date.now() - showdownEnteredAtRef.current
+        if (stuckFor > 20_000) setShowdownStuck(true)
+        // After 30s, quietly try forceShowdownTimeout every 20s. The tx will
+        // revert with TimeoutNotReached if the on-chain block-based timeout
+        // hasn't passed yet; that's harmless. Once blocks catch up, it settles.
+        if (stuckFor > 30_000 && sessionAccount && !autoBusyRef.current && !txBusy) {
+          const sinceLastTry = Date.now() - forceAutoFiredRef.current
+          if (sinceLastTry > 20_000) {
+            forceAutoFiredRef.current = Date.now()
+            console.log('[AUTO-FORCE-TIMEOUT] attempting forceShowdownTimeout')
+            handleForceShowdownTimeout().catch(err => {
+              // Silent on TimeoutNotReached / block-count mismatch; the next
+              // auto-tick will try again.
+              console.log('[AUTO-FORCE-TIMEOUT] tx rejected (likely too early):', String(err?.message ?? err).slice(0, 120))
+            })
+          }
+        }
       }, 1000)
       return () => clearInterval(interval)
     }
     showdownEnteredAtRef.current = 0
+    forceAutoFiredRef.current = 0
     if (showdownStuck) setShowdownStuck(false)
-  }, [status, showdownStuck])
+  }, [status, showdownStuck, sessionAccount, txBusy, handleForceShowdownTimeout])
 
   const [timeLeft, setTimeLeft] = useState(45)
   const turnStartRef = useRef<number>(0)
@@ -1475,12 +1532,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       )}
       {isBustedAtTable && handIsIdle && !needsRoomDeposit && (
         <div style={{ ...st.banner, color: '#E8C07E' }}>
-          You're busted (0 INIT). Click <b>Rebuy</b> to buy back in from your room balance, or <b>Leave Table</b> to return to the lobby.
+          You lost this hand. Click <b>Sit Down</b> to buy back in from your room balance ({parseFloat(gameBalance || '0').toFixed(2)} INIT available), or <b>Leave Table</b> to return to the lobby.
         </div>
       )}
       {isBustedAtTable && handIsIdle && needsRoomDeposit && (
         <div style={{ ...st.banner, color: '#E07070' }}>
-          You're busted and your room balance is too low for the minimum buy-in ({minBuyInFloat.toFixed(2)} INIT). Open <b>Cashier</b> to deposit more, or leave the table.
+          You lost this hand. Your room balance ({parseFloat(gameBalance || '0').toFixed(2)} INIT) is below the minimum buy-in ({minBuyInFloat.toFixed(2)} INIT). Click <b>Deposit to Room</b> to top up, or <b>Leave Table</b> to return to the lobby.
         </div>
       )}
 

@@ -617,9 +617,24 @@ contract PokerGame is IVRFConsumer {
 
     function _leaveTable(uint256 tableId, address player) internal {
         Session storage s = sessions[tableId];
-        require(s.status == PokerLib.GameStatus.Waiting || s.status == PokerLib.GameStatus.Settled, "Active hand");
-
         PlayerState storage p = playerStates[tableId][player];
+        // Busted players (stack=0) can leave at any time — they don't
+        // participate in the ongoing hand anyway. Everyone else must wait
+        // for Waiting/Settled.
+        if (p.chips > 0) {
+            require(
+                s.status == PokerLib.GameStatus.Waiting || s.status == PokerLib.GameStatus.Settled,
+                "Active hand"
+            );
+        } else {
+            // Busted seat in an active hand: mark them folded so
+            // _advanceGame/_runoutToShowdown don't try to include them.
+            if (p.isActive) {
+                p.isActive = false;
+                p.lastAction = PokerLib.Action.Fold;
+            }
+        }
+
         uint256 cashOut = p.chips;
         uint8 seat = p.seatIndex;
         delete playerStates[tableId][player];
