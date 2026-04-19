@@ -1191,34 +1191,59 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   // see stale "seated with 0 INIT" state for a moment. Proactively call
   // leaveTableFor so the player transitions into a clean off-table state
   // with the proper post-loss CTAs (Sit Down / Deposit / Leave).
+  //
+  // IMPORTANT: only fires if the player was previously observed WITH chips
+  // on this seat, and only after a short grace period. Otherwise a freshly
+  // joined seat (where wagmi briefly reports chips=0 before the first
+  // refetch catches up) would be misinterpreted as "busted" and immediately
+  // released — looking like "sat down, got bounced".
   const autoLeaveFiredRef = useRef(false)
+  const hadChipsRef = useRef(false)
+  const bustedSinceRef = useRef<number>(0)
   useEffect(() => {
+    // Track whether we've ever seen a positive stack on this seat.
+    if (isSeated && myStake > 0n) hadChipsRef.current = true
     // Reset the one-shot guard whenever we're no longer in the busted-settled
     // window — e.g., user refunded / re-seated / new hand started.
     if (!(isBustedAtTable && handIsIdle)) {
       autoLeaveFiredRef.current = false
+      bustedSinceRef.current = 0
       return
     }
     if (autoLeaveFiredRef.current) return
     if (!sessionAccount || !address || rebuying || leaving || txBusy) return
+    // Don't release a seat we never saw chipped-up on — that's the
+    // right-after-join race window.
+    if (!hadChipsRef.current) return
+    // Grace period: require the busted-idle state to persist for ~2s before
+    // firing, so a transient frame doesn't cause a false auto-leave.
+    if (bustedSinceRef.current === 0) {
+      bustedSinceRef.current = Date.now()
+      const t = setTimeout(() => {
+        // Re-evaluate in 2s — state may have changed (rejoin, new hand).
+        // The effect will re-run and decide again.
+      }, 2100)
+      return () => clearTimeout(t)
+    }
+    if (Date.now() - bustedSinceRef.current < 2000) return
     autoLeaveFiredRef.current = true
-    console.log('[BUSTED] auto-releasing seat after settle')
+    console.log('[BUSTED] auto-releasing seat after settle (had chips before)')
     sWrite('leaveTableFor', [tableId, address], undefined, 500_000n)
       .then(() => {
         addLog('Seat released — you can Sit Down / Rebuy or leave')
+        hadChipsRef.current = false
         refreshAll()
       })
       .catch((err: any) => {
         const m = String(err?.message ?? err)
         if (/NotSeated|not seated/i.test(m)) {
-          // Contract already pruned us — that's the success path.
           console.log('[BUSTED] seat already pruned by contract')
+          hadChipsRef.current = false
         } else {
           console.warn('[BUSTED] auto-leave failed:', m)
-          // Leave the flag tripped so we don't loop; the manual buttons still work.
         }
       })
-  }, [isBustedAtTable, handIsIdle, sessionAccount, address, rebuying, leaving, txBusy, sWrite, tableId, addLog, refreshAll])
+  }, [isBustedAtTable, handIsIdle, isSeated, myStake, sessionAccount, address, rebuying, leaving, txBusy, sWrite, tableId, addLog, refreshAll])
 
   const handleCloseSession = useCallback(() => {
     if (isSeated) return
