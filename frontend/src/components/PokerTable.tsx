@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   formatEther, parseEther, keccak256, toHex, encodePacked,
   createWalletClient, createPublicClient, http,
@@ -302,27 +302,36 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     transport: http(RPC_URL_WRITE),
   }), [])
 
-  const sWrite = useCallback(async (fnName: string, args: unknown[], value?: bigint, gasHint = 600_000n): Promise<`0x${string}`> => {
+  const sWrite = useCallback(async (fnName: string, args: unknown[], value?: bigint, gasHint = 600_000n, skipSimulate = false): Promise<`0x${string}`> => {
     if (!sessionAccount) throw new Error('Session wallet not set up')
     // Preflight: simulate call against the current chain state to surface the
     // real revert reason BEFORE spending gas / waiting 30s for the receipt.
     // Viem turns custom errors / Error(string) into readable messages here.
-    try {
-      await publicClient.simulateContract({
-        address: POKER_GAME_ADDRESS,
-        abi: POKER_GAME_ABI,
-        functionName: fnName,
-        args,
-        account: sessionAccount,
-        ...(value !== undefined ? { value } : {}),
-      } as any)
-    } catch (simErr: any) {
-      const reason = simErr?.shortMessage ?? simErr?.message ?? String(simErr)
-      console.warn(`[sWrite] ${fnName} simulate failed:`, reason)
-      // Re-throw with the precise reason attached.
-      const e = new Error(`${fnName} would revert: ${String(reason).slice(0, 220)}`)
-      ;(e as any).cause = simErr
-      throw e
+    //
+    // Recovery calls (forceShowdownTimeout) MUST bypass simulate: if the
+    // on-chain timeout hasn't been reached yet, simulate would block the tx
+    // and new blocks may not arrive. We want the tx to actually land so that
+    // (a) mining a block moves block.number forward, and (b) once the timeout
+    // threshold is reached a later retry succeeds.
+    if (!skipSimulate) {
+      try {
+        await publicClient.simulateContract({
+          address: POKER_GAME_ADDRESS,
+          abi: POKER_GAME_ABI,
+          functionName: fnName,
+          args,
+          account: sessionAccount,
+          ...(value !== undefined ? { value } : {}),
+        } as any)
+      } catch (simErr: any) {
+        const reason = simErr?.shortMessage ?? simErr?.message ?? String(simErr)
+        console.warn(`[sWrite] ${fnName} simulate failed:`, reason)
+        const e = new Error(`${fnName} would revert: ${String(reason).slice(0, 220)}`)
+        ;(e as any).cause = simErr
+        throw e
+      }
+    } else {
+      console.log(`[sWrite] ${fnName} simulate BYPASSED (recovery path)`)
     }
     const wc = createWalletClient({
       account: sessionAccount,
@@ -513,7 +522,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     [saltKeyPrefix, expectedHandId]
   )
   // Find a salt we stored earlier even if the handId window has shifted.
-  // Try current expected, current-1, current+1 вЂ” covers any commit/deal race.
+  // Try current expected, current-1, current+1 — covers any commit/deal race.
   // Also fall back to scanning any remaining salts under our prefix so a
   // sufficiently-aged-but-still-valid salt can still be recovered even after
   // many lifecycle transitions (e.g. all-in runout ping-ponging handId).
@@ -532,7 +541,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       }
     }
     // Last-resort: scan all keys under our prefix. This protects against the
-    // case where handId shifted more than В±1 during an all-in runout.
+    // case where handId shifted more than ±1 during an all-in runout.
     if (typeof localStorage !== 'undefined') {
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i)
@@ -577,7 +586,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const autoBusyRef = useRef(false)
   const lastAutoKeyRef = useRef<string | null>(null)
   // Diagnostic counters visible in debug overlay (help pinpoint stuck states)
-  const [dbgLastAction, setDbgLastAction] = useState<string>('вЂ”')
+  const [dbgLastAction, setDbgLastAction] = useState<string>('—')
   const [dbgDealAttempts, setDbgDealAttempts] = useState(0)
   const [dbgLastError, setDbgLastError] = useState<string | null>(null)
   // Watchdog: if the on-chain state doesn't progress for a while but the loop
@@ -595,7 +604,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   // If the table has already moved back to Waiting/Settled, OR we're in a
   // last-man-standing Showdown (one active player), any stale reveal-related
   // UI/errors should be cleared. Folded players in particular must never see
-  // a "revealHoleCardsFor would revert" banner вЂ” reveal doesn't apply to them.
+  // a "revealHoleCardsFor would revert" banner — reveal doesn't apply to them.
   useEffect(() => {
     const isLastStandingShowdown = status === 6 && allPlayers.filter(p => p.isActive).length === 1
     const isSettledOrWaiting = status === 0 || status === 7
@@ -637,19 +646,114 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (!sessionAccount || !address || !saltKey) return
     setActionPending(true)
     setLocalError(null)
-    const bytes = crypto.getRandomValues(new Uint8Array(32))
-    const hex = toHex(bytes)
+
+    // Check on-chain commitment first. If contract already has a commitment
+    // for us in this hand, we MUST reuse whatever salt we previously stored —
+    // never overwrite. Generating a fresh salt here would desync local vs
+    // on-chain and kill the reveal at showdown.
+    let onChainCommitment: `0x${string}` | null = null
+    try {
+      const ps = await publicClient.readContract({
+        address: POKER_GAME_ADDRESS,
+        abi: POKER_GAME_ABI,
+        functionName: 'getPlayerState',
+        args: [tableId, address],
+      }) as readonly unknown[]
+      // getPlayerState index 5 = holeCommitment (bytes32)
+      const c = ps[5] as `0x${string}`
+      if (c && c !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+        onChainCommitment = c
+      }
+    } catch (probeErr) {
+      console.warn('[COMMIT] on-chain probe failed, continuing carefully:', probeErr)
+    }
+
+    const existingHex = getStoredValue(saltKey) as `0x${string}` | null
+
+    if (onChainCommitment) {
+      // Contract already has our commitment. Validate that our local salt
+      // hashes to it. If mismatch, local salt is unusable but we must NOT
+      // overwrite — other devices may hold the real salt.
+      if (existingHex) {
+        const check = keccak256(existingHex as `0x${string}`)
+        if (check.toLowerCase() === onChainCommitment.toLowerCase()) {
+          console.log('[COMMIT] on-chain commitment matches local salt — skipping re-commit')
+          addLog('Salt already committed (verified)')
+          setActionPending(false)
+          setTimeout(refreshAll, 500)
+          return
+        }
+        console.warn('[COMMIT] local salt MISMATCH with on-chain commitment. Leaving local salt intact — another device may hold the real one.')
+        setDbgLastError('Local salt does not match on-chain commitment — reveal may fail on this device')
+        setActionPending(false)
+        return
+      }
+      // Commitment exists but no local salt at all. Nothing to do here except
+      // flag it — a reveal from this device won't be possible.
+      console.warn('[COMMIT] on-chain commitment exists but no local salt — this device cannot reveal')
+      setDbgLastError('No local salt for this hand — reveal not possible on this device')
+      setActionPending(false)
+      return
+    }
+
+    // No on-chain commitment yet. Reuse an existing local salt if present
+    // (we may have generated it before and then failed a retry), otherwise
+    // create a fresh one. Write storage BEFORE tx so a mid-flight crash
+    // doesn't lose the secret.
+    let hex: `0x${string}`
+    if (existingHex) {
+      console.log('[COMMIT] reusing existing local salt for', saltKey)
+      hex = existingHex
+    } else {
+      const bytes = crypto.getRandomValues(new Uint8Array(32))
+      hex = toHex(bytes) as `0x${string}`
+      setStoredValue(saltKey, hex)
+    }
     const hash = keccak256(hex as `0x${string}`)
-    setStoredValue(saltKey, hex)
+
     try {
       await sWrite('commitSaltFor', [tableId, address, hash])
       addLog('Salt committed')
     } catch (err: any) {
       const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
-      // If commit reverted for any reason, the salt we just stored is useless вЂ”
-      // remove it so next retry doesn't skip commit by mistake.
-      if (!/SaltAlreadyCommitted|Salt already/i.test(String(err?.message ?? err))) {
-        try { localStorage.removeItem(saltKey) } catch {}
+      const isAlreadyCommitted = /SaltAlreadyCommitted|Salt already/i.test(String(err?.message ?? err))
+      if (isAlreadyCommitted) {
+        // Race: between our probe and tx, someone (peer / auto-loop) already
+        // committed. Our stored salt MAY be the right one (if we were the
+        // committer on another tab) or MAY NOT. Do NOT overwrite or delete
+        // it here — verify against the on-chain commitment and let it stay
+        // if matching. If we just now wrote a fresh salt above, though, it
+        // is almost certainly wrong and we should remove to avoid poisoning.
+        try {
+          const ps = await publicClient.readContract({
+            address: POKER_GAME_ADDRESS,
+            abi: POKER_GAME_ABI,
+            functionName: 'getPlayerState',
+            args: [tableId, address],
+          }) as readonly unknown[]
+          const c = ps[5] as `0x${string}`
+          const ok = keccak256(hex).toLowerCase() === c.toLowerCase()
+          if (!ok) {
+            // Our newly-written salt is wrong. But only strip it if we just
+            // generated it this call — otherwise it was pre-existing and may
+            // still be valid elsewhere.
+            if (!existingHex) {
+              console.warn('[COMMIT] SaltAlreadyCommitted and our fresh salt does not match — removing poisoned storage')
+              try { localStorage.removeItem(saltKey) } catch {}
+            } else {
+              console.warn('[COMMIT] SaltAlreadyCommitted and pre-existing salt does not match — leaving intact (may be valid on another device)')
+            }
+          } else {
+            console.log('[COMMIT] SaltAlreadyCommitted — our salt verifies, all good')
+            addLog('Salt already committed (verified)')
+          }
+        } catch {}
+      } else {
+        // Genuine commit failure — salt we may have just written is useless.
+        // Only strip if we generated fresh this call.
+        if (!existingHex) {
+          try { localStorage.removeItem(saltKey) } catch {}
+        }
       }
       setLocalError(msg)
       throw err
@@ -657,7 +761,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       setActionPending(false)
       setTimeout(refreshAll, 1000)
     }
-  }, [address, addLog, refreshAll, sWrite, saltKey, sessionAccount, tableId])
+  }, [address, addLog, refreshAll, sWrite, saltKey, sessionAccount, tableId, publicClient])
 
   const handleDeal = useCallback(async () => {
     if (!address) return
@@ -689,7 +793,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         const onChainStatus = Number(sess[5])
         const vrfPendingOnChain = Boolean(sess[13])
         if ((onChainStatus !== 0 && onChainStatus !== 7) || vrfPendingOnChain) {
-          console.log('[AUTO] deal benign race вЂ” on-chain status=', onChainStatus, 'vrfPending=', vrfPendingOnChain)
+          console.log('[AUTO] deal benign race — on-chain status=', onChainStatus, 'vrfPending=', vrfPendingOnChain)
           addLog('Hand started (by peer)')
           setLocalError(null)
           setLocalStatus(null)
@@ -726,12 +830,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       const isActiveOnChain = Boolean(ps[3])     // getPlayerState.isActive
       const hasRevealedOnChain = Boolean(ps[6])  // getPlayerState.hasRevealed
       if (!isActiveOnChain || hasRevealedOnChain) {
-        console.log('[REVEAL] skipped вЂ” isActive=', isActiveOnChain, 'hasRevealed=', hasRevealedOnChain)
+        console.log('[REVEAL] skipped — isActive=', isActiveOnChain, 'hasRevealed=', hasRevealedOnChain)
         return
       }
     } catch (probeErr) {
       // If the probe itself fails (RPC glitch), fall through to the existing
-      // simulate preflight inside sWrite вЂ” it will still catch the revert.
+      // simulate preflight inside sWrite — it will still catch the revert.
       console.warn('[REVEAL] pre-check failed, continuing:', probeErr)
     }
     const found = lookupSalt()
@@ -771,7 +875,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         const hasRevealedOnChain = Boolean(ps[6]) // getPlayerState.hasRevealed
         const onChainStatus = Number(sess[5])     // Session.status
         if (hasRevealedOnChain || onChainStatus !== 6) {
-          console.log('[AUTO] reveal benign race вЂ” hasRevealed=', hasRevealedOnChain, 'status=', onChainStatus)
+          console.log('[AUTO] reveal benign race — hasRevealed=', hasRevealedOnChain, 'status=', onChainStatus)
           setLocalError(null)
           setLocalStatus(null)
           autoBusyRef.current = false
@@ -782,7 +886,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       } catch (probeErr) {
         console.warn('[REVEAL] probe after revert failed:', probeErr)
       }
-      // Genuine failure вЂ” surface and rethrow so auto-loop retries.
+      // Genuine failure — surface and rethrow so auto-loop retries.
       setLocalError(msg.slice(0, 180))
       throw err
     } finally {
@@ -813,7 +917,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         // status 0=Waiting, 6=Showdown, 7=Settled. Anything other than Showdown
         // means a peer already advanced the hand.
         if (onChainStatus !== 6) {
-          console.log('[AUTO] evaluateShowdown benign race вЂ” on-chain status=', onChainStatus)
+          console.log('[AUTO] evaluateShowdown benign race — on-chain status=', onChainStatus)
           addLog('Showdown resolved (by peer)')
           setLocalError(null)
           setLocalStatus(null)
@@ -839,8 +943,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     setActionPending(true)
     setLocalError(null)
     try {
-      await sWrite('forceShowdownTimeout', [tableId], undefined, 600_000n)
-      addLog('Forced showdown timeout вЂ” hand resolved')
+      await sWrite('forceShowdownTimeout', [tableId], undefined, 600_000n, true)
+      addLog('Forced showdown timeout — hand resolved')
     } catch (err: any) {
       const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 220)
       setDbgLastError(msg)
@@ -876,9 +980,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       }) as readonly `0x${string}`[]
       const iAmOnChain = onChainPlayers.some(p => p.toLowerCase() === address.toLowerCase())
       // Reattach is ONLY the right thing if I'm still holding chips on this
-      // seat вЂ” i.e., the session was dropped mid-hand and wagmi hasn't caught
+      // seat — i.e., the session was dropped mid-hand and wagmi hasn't caught
       // up. If my on-chain stack is 0 (busted, waiting for prune) or I want
-      // to buy back in with a new amount, we must NOT silently reattach вЂ”
+      // to buy back in with a new amount, we must NOT silently reattach —
       // we need to leave, then rejoin with the fresh buy-in.
       let iHaveChipsOnChain = false
       if (iAmOnChain) {
@@ -895,7 +999,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       }
       console.log('[SIT-DOWN] iAmOnChain=', iAmOnChain, 'iHaveChipsOnChain=', iHaveChipsOnChain)
       if (iAmOnChain && iHaveChipsOnChain) {
-        setSessionStatus('Already seated with chips вЂ” reattaching session')
+        setSessionStatus('Already seated with chips — reattaching session')
         setBuyInOpen(false)
         addLog('Reattached to existing seat')
         setSessionStatus('')
@@ -918,7 +1022,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           const m = String(leaveErr?.message ?? leaveErr)
           if (/NotSeated|not seated/i.test(m)) {
             // Contract already pruned us; treat as success.
-            console.log('[SIT-DOWN] leave reverted NotSeated вЂ” seat already pruned, continuing')
+            console.log('[SIT-DOWN] leave reverted NotSeated — seat already pruned, continuing')
             leaveSucceeded = true
           } else {
             leaveErrorMsg = m
@@ -926,7 +1030,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           }
         }
         // Verify on-chain state after the leave attempt. Even if the tx
-        // reported success, we must confirm the seat is actually freed вЂ”
+        // reported success, we must confirm the seat is actually freed —
         // otherwise joinTableFor will revert with AlreadySeated and the
         // user will experience a confusing "sat down then got bounced".
         if (leaveSucceeded) {
@@ -940,12 +1044,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
             if (playersAfter.some(p => p.toLowerCase() === address.toLowerCase())) {
               leaveSucceeded = false
               leaveErrorMsg = 'Seat still occupied after leave attempt'
-              console.warn('[SIT-DOWN] leave returned success but seat still on-chain вЂ” aborting join')
+              console.warn('[SIT-DOWN] leave returned success but seat still on-chain — aborting join')
             }
           } catch {}
         }
         if (!leaveSucceeded) {
-          // Abort. Do NOT continue to join вЂ” that would either hit AlreadySeated
+          // Abort. Do NOT continue to join — that would either hit AlreadySeated
           // or succeed into a bad state the user didn't intend.
           setSessionStatus('')
           setSittingDown(false)
@@ -1123,7 +1227,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         latestStatus = Number(latestSession[5])
       }
 
-      // Busted players (stack=0) can always leave вЂ” they don't participate
+      // Busted players (stack=0) can always leave — they don't participate
       // in the ongoing hand anyway, and the contract will simply prune them.
       const myStakeNow = myPlayer?.chips ?? 0n
       if (latestStatus !== 0 && latestStatus !== 7 && myStakeNow > 0n) {
@@ -1153,7 +1257,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   // Rebuy: the player is busted (stack=0) and wants to buy back in. The
   // contract doesn't have a dedicated rebuy op, so we leave the seat (which
-  // refunds 0 chips to room balance вЂ” the player already had 0) and then
+  // refunds 0 chips to room balance — the player already had 0) and then
   // open the BuyInModal which will trigger the normal join flow.
   const handleRebuy = useCallback(async () => {
     if (!sessionAccount || !address || !isSeated) return
@@ -1167,10 +1271,10 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     try {
       // Try to release the seat. If the contract has already pruned us (busted
       // seats are removed on settle / next deal), leaveTableFor will revert with
-      // NotSeated вЂ” that's fine, we can proceed straight to the buy-in modal.
+      // NotSeated — that's fine, we can proceed straight to the buy-in modal.
       try {
         await sWrite('leaveTableFor', [tableId, address], undefined, 500_000n)
-        addLog('Seat released вЂ” choose rebuy amount')
+        addLog('Seat released — choose rebuy amount')
       } catch (leaveErr: any) {
         const m = String(leaveErr?.message ?? leaveErr)
         if (/NotSeated|not seated/i.test(m)) {
@@ -1199,7 +1303,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   // on this seat, and only after a short grace period. Otherwise a freshly
   // joined seat (where wagmi briefly reports chips=0 before the first
   // refetch catches up) would be misinterpreted as "busted" and immediately
-  // released вЂ” looking like "sat down, got bounced".
+  // released — looking like "sat down, got bounced".
   const autoLeaveFiredRef = useRef(false)
   const hadChipsRef = useRef(false)
   const bustedSinceRef = useRef<number>(0)
@@ -1207,7 +1311,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     // Track whether we've ever seen a positive stack on this seat.
     if (isSeated && myStake > 0n) hadChipsRef.current = true
     // Reset the one-shot guard whenever we're no longer in the busted-settled
-    // window вЂ” e.g., user refunded / re-seated / new hand started.
+    // window — e.g., user refunded / re-seated / new hand started.
     if (!(isBustedAtTable && handIsIdle)) {
       autoLeaveFiredRef.current = false
       bustedSinceRef.current = 0
@@ -1215,7 +1319,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     }
     if (autoLeaveFiredRef.current) return
     if (!sessionAccount || !address || rebuying || leaving || txBusy) return
-    // Don't release a seat we never saw chipped-up on вЂ” that's the
+    // Don't release a seat we never saw chipped-up on — that's the
     // right-after-join race window.
     if (!hadChipsRef.current) return
     // Grace period: require the busted-idle state to persist for ~2s before
@@ -1223,7 +1327,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (bustedSinceRef.current === 0) {
       bustedSinceRef.current = Date.now()
       const t = setTimeout(() => {
-        // Re-evaluate in 2s вЂ” state may have changed (rejoin, new hand).
+        // Re-evaluate in 2s — state may have changed (rejoin, new hand).
         // The effect will re-run and decide again.
       }, 2100)
       return () => clearTimeout(t)
@@ -1233,7 +1337,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     console.log('[BUSTED] auto-releasing seat after settle (had chips before)')
     sWrite('leaveTableFor', [tableId, address], undefined, 500_000n)
       .then(() => {
-        addLog('Seat released вЂ” you can Sit Down / Rebuy or leave')
+        addLog('Seat released — you can Sit Down / Rebuy or leave')
         hadChipsRef.current = false
         refreshAll()
       })
@@ -1319,11 +1423,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       if (!enoughChippedPlayers || !iHaveChips) return
       // Even if a local salt exists, on-chain state might disagree (stale salt
       // from an earlier contract deploy, a dropped tx, or a pre-leave session).
-      // We try to commit anyway вЂ” contract will revert with SaltAlreadyCommitted
+      // We try to commit anyway — contract will revert with SaltAlreadyCommitted
       // if it turns out we really did commit already, and the loop will move on.
       const existingSalt = getStoredValue(saltKey)
       if (!existingSalt) {
-        // No local salt вЂ” plain commit path.
+        // No local salt — plain commit path.
       }
       // Short pause after showdown so players can read the winner banner
       const delay = status === 7 ? 1200 : 0
@@ -1334,7 +1438,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           .then(() => setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500))
           .catch((err: any) => {
             const msg = String(err?.message ?? err)
-            // If it's SaltAlreadyCommitted, that's fine вЂ” clear local stale salt
+            // If it's SaltAlreadyCommitted, that's fine — clear local stale salt
             // so next hand doesn't inherit it, but don't treat as error.
             if (/SaltAlreadyCommitted|Salt already/i.test(msg)) {
               console.log('[AUTO] salt already committed on-chain, moving on')
@@ -1356,9 +1460,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       return
     }
     // SHOWDOWN PHASE (status===6)
-    // Handle last-man-standing FIRST вЂ” if only one active player remains
+    // Handle last-man-standing FIRST — if only one active player remains
     // (e.g. after a fold), the contract already switched status to Showdown
-    // but does NOT auto-settle. Use settleLastStanding directly вЂ” it's a
+    // but does NOT auto-settle. Use settleLastStanding directly — it's a
     // dedicated path that does not require any reveal and always succeeds
     // in this shape.
     if (status === 6) {
@@ -1377,7 +1481,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
                 functionName: 'sessions', args: [tableId],
               }) as readonly unknown[]
               if (Number(sess[5]) !== 6) {
-                console.log('[AUTO] last-standing race вЂ” peer already settled')
+                console.log('[AUTO] last-standing race — peer already settled')
                 addLog('Hand settled (by peer)')
                 return
               }
@@ -1393,7 +1497,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (status === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
       const activeNow = allPlayers.filter(p => p.isActive)
       if (activeNow.length < 2) {
-        console.log('[AUTO-REVEAL-SKIP] activeNow < 2 вЂ” falls to evaluate branch below')
+        console.log('[AUTO-REVEAL-SKIP] activeNow < 2 — falls to evaluate branch below')
       } else if (!hasAnyUsableSalt) {
         console.warn('[AUTO-REVEAL-SKIP] salt missing for handId=', handId, 'expected=', expectedHandId)
         setDbgLastAction(`reveal-skip:no-salt h=${handId}`)
@@ -1419,9 +1523,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, txBusy, lookupSalt])
 
   // Watchdog: every 2s check if we've been stuck. Two stall modes:
-  //   (1) autoBusyRef=true for >8s in same state вЂ” an action never completed
+  //   (1) autoBusyRef=true for >8s in same state — an action never completed
   //   (2) autoBusyRef=false but lastAutoKeyRef locked on current state for >8s
-  //       вЂ” we "handled" this stateKey but state didn't progress, meaning
+  //       — we "handled" this stateKey but state didn't progress, meaning
   //       the action silently didn't actually change anything on-chain
   // Either way: clear both refs and force a retry.
   const watchdogStateRef = useRef<{ key: string; at: number }>({ key: '', at: 0 })
@@ -1438,7 +1542,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       const stuckBusy = autoBusyRef.current && stuckMs > 8000
       const stuckLocked = !autoBusyRef.current && lastAutoKeyRef.current !== null && stuckMs > 8000
       if (stuckBusy || stuckLocked) {
-        console.warn(`[WATCHDOG] stuck ${stuckMs}ms in state ${key} (busy=${autoBusyRef.current}, lockedKey=${lastAutoKeyRef.current}) вЂ” clearing both refs`)
+        console.warn(`[WATCHDOG] stuck ${stuckMs}ms in state ${key} (busy=${autoBusyRef.current}, lockedKey=${lastAutoKeyRef.current}) — clearing both refs`)
         autoBusyRef.current = false
         lastAutoKeyRef.current = null
         refreshAll()
@@ -1787,7 +1891,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       {buyInOpen && <BuyInModal bigBlind={bigBlind} gameBalance={gameBalance} walletBalance={walletBalance} onConfirm={handleSitDown} onClose={() => setBuyInOpen(false)} isProcessing={sittingDown} sessionStatus={sessionStatus} />}
       <CashierModal isOpen={cashierOpen} onClose={() => setCashierOpen(false)} walletBalance={walletBalance} gameBalance={gameBalance} isLoading={balLoading} onRefreshBalances={refetchBal} />
 
-      {/* Debug overlay вЂ” visible diagnostic of auto-loop / on-chain state. */}
+      {/* Debug overlay — visible diagnostic of auto-loop / on-chain state. */}
       <div style={{
         position: 'fixed', right: 12, bottom: 42, zIndex: 1000,
         background: 'rgba(10,10,10,0.92)', border: '1px solid #1C1C1C',
