@@ -304,6 +304,26 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   const sWrite = useCallback(async (fnName: string, args: unknown[], value?: bigint, gasHint = 600_000n): Promise<`0x${string}`> => {
     if (!sessionAccount) throw new Error('Session wallet not set up')
+    // Preflight: simulate call against the current chain state to surface the
+    // real revert reason BEFORE spending gas / waiting 30s for the receipt.
+    // Viem turns custom errors / Error(string) into readable messages here.
+    try {
+      await publicClient.simulateContract({
+        address: POKER_GAME_ADDRESS,
+        abi: POKER_GAME_ABI,
+        functionName: fnName,
+        args,
+        account: sessionAccount,
+        ...(value !== undefined ? { value } : {}),
+      } as any)
+    } catch (simErr: any) {
+      const reason = simErr?.shortMessage ?? simErr?.message ?? String(simErr)
+      console.warn(`[sWrite] ${fnName} simulate failed:`, reason)
+      // Re-throw with the precise reason attached.
+      const e = new Error(`${fnName} would revert: ${String(reason).slice(0, 220)}`)
+      ;(e as any).cause = simErr
+      throw e
+    }
     const wc = createWalletClient({
       account: sessionAccount,
       chain: INIPOKER_CHAIN as any,
@@ -321,7 +341,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       ...(value !== undefined ? { value } : {}),
     } as any)
     const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 })
-    if (receipt.status !== 'success') throw new Error(`${fnName} reverted (${hash.slice(0, 10)})`)
+    if (receipt.status !== 'success') throw new Error(`${fnName} reverted on-chain (${hash.slice(0, 10)})`)
     return hash
   }, [publicClient, sessionAccount])
 
@@ -510,6 +530,10 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   // Auto-loop state must be defined before handlers so they can reset it.
   const autoBusyRef = useRef(false)
   const lastAutoKeyRef = useRef<string | null>(null)
+  // Diagnostic counters visible in debug overlay (help pinpoint stuck states)
+  const [dbgLastAction, setDbgLastAction] = useState<string>('—')
+  const [dbgDealAttempts, setDbgDealAttempts] = useState(0)
+  const [dbgLastError, setDbgLastError] = useState<string | null>(null)
   // Watchdog: if the on-chain state doesn't progress for a while but the loop
   // thinks it already acted, force a retry by clearing the key.
   const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -588,14 +612,19 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (!address) return
     setActionPending(true)
     setLocalError(null)
+    setDbgLastAction('handleDeal:start')
+    setDbgDealAttempts(n => n + 1)
     console.log('[DEAL] sending requestDealFor table=', tableId, 'player=', address)
     try {
       const hash = await sWrite('requestDealFor', [tableId, address], undefined, 800_000n)
       console.log('[DEAL] success hash=', hash)
+      setDbgLastAction('handleDeal:success')
       addLog('Dealing new hand')
     } catch (err: any) {
       const msg = (err.shortMessage ?? err.message ?? String(err))
       console.warn('[DEAL] failed:', msg)
+      setDbgLastError(String(msg).slice(0, 180))
+      setDbgLastAction('handleDeal:err')
       // Benign race: peer already fired requestDealFor. Verify on-chain that
       // status advanced past Waiting/Settled (or vrfPending) before silently
       // accepting. Otherwise rethrow so auto-loop clears lock and retries.
@@ -968,10 +997,16 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   useEffect(() => {
     if (!sessionAccount || !address || !isSeated || !saltKeyPrefix || autoBusyRef.current || txBusy) {
       if (isSeated && sessionAccount && (status === 0 || status === 7)) {
-        console.log('[AUTO-GUARD]', {
-          hasSess: !!sessionAccount, hasAddr: !!address, isSeated,
-          hasSaltPrefix: !!saltKeyPrefix, busy: autoBusyRef.current, txBusy,
-        })
+        const reasons = [
+          !sessionAccount && 'no-session',
+          !address && 'no-address',
+          !isSeated && 'not-seated',
+          !saltKeyPrefix && 'no-saltPrefix',
+          autoBusyRef.current && 'autoBusy',
+          txBusy && 'txBusy',
+        ].filter(Boolean).join(',')
+        console.log('[AUTO-GUARD] blocked by:', reasons)
+        setDbgLastAction(`guard:${reasons}`)
       }
       return
     }
@@ -985,10 +1020,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (lastAutoKeyRef.current === stateKey) {
       if (status === 0 || status === 7) {
         console.log('[AUTO-SKIP] stateKey unchanged:', stateKey)
+        setDbgLastAction(`skip:${stateKey}`)
       }
       return
     }
     console.log('[AUTO-TICK]', { stateKey, status, saltsCommitted, playerCount, enoughChippedPlayers, iHaveChips })
+    setDbgLastAction(`tick:${stateKey}`)
 
     const hasAnyUsableSalt = lookupSalt() !== null
 
@@ -1338,6 +1375,23 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
       {buyInOpen && <BuyInModal bigBlind={bigBlind} gameBalance={gameBalance} walletBalance={walletBalance} onConfirm={handleSitDown} onClose={() => setBuyInOpen(false)} isProcessing={sittingDown} sessionStatus={sessionStatus} />}
       <CashierModal isOpen={cashierOpen} onClose={() => setCashierOpen(false)} walletBalance={walletBalance} gameBalance={gameBalance} isLoading={balLoading} onRefreshBalances={refetchBal} />
+
+      {/* Debug overlay — visible diagnostic of auto-loop / on-chain state. */}
+      <div style={{
+        position: 'fixed', right: 12, bottom: 42, zIndex: 1000,
+        background: 'rgba(10,10,10,0.92)', border: '1px solid #1C1C1C',
+        borderRadius: 6, padding: '8px 10px', fontSize: 10, color: '#888',
+        fontFamily: 'ui-monospace,monospace', maxWidth: 280, lineHeight: 1.5,
+        pointerEvents: 'none',
+      }}>
+        <div style={{ color: '#E8DCC8', fontWeight: 600, marginBottom: 3 }}>debug</div>
+        <div>status={status} · pc={playerCount} · sC={saltsCommitted} · vrf={vrfPending ? '1' : '0'}</div>
+        <div>handId={handId} · cC={communityCount} · active={allPlayers.filter(p => p.isActive).length}</div>
+        <div>isSeated={isSeated ? 'y' : 'n'} · hasSess={sessionAccount ? 'y' : 'n'} · txBusy={txBusy ? 'y' : 'n'}</div>
+        <div>autoBusy={autoBusyRef.current ? 'y' : 'n'} · dealAttempts={dbgDealAttempts}</div>
+        <div>last={dbgLastAction}</div>
+        {dbgLastError && <div style={{ color: '#E07070', wordBreak: 'break-word' }}>err: {dbgLastError}</div>}
+      </div>
 
       <footer style={st.footer}>
         <span>INIPoker</span>

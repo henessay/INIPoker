@@ -1,3 +1,8 @@
+// Vercel serverless proxy to the INIPoker MiniEVM RPC.
+// Backend URL can be overridden with env var RPC_BACKEND in Vercel Dashboard;
+// defaults to the current VPS IP for the hackathon deploy.
+const RPC_BACKEND = process.env.RPC_BACKEND || 'http://204.168.233.1:8545';
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -6,7 +11,7 @@ export default async function handler(req, res) {
 
   try {
     const body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-    const response = await fetch('http://204.168.233.1:8545', {
+    const response = await fetch(RPC_BACKEND, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: body,

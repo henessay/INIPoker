@@ -5,6 +5,7 @@ import { useAccount } from 'wagmi'
 import { useInterwovenKit } from '@initia/interwovenkit-react'
 import CashierModal from './CashierModal'
 import { useWalletBalance } from '../hooks/useWalletBalance'
+import { POKER_GAME_ADDRESS } from '../config/contract'
 
 // ═══════════════════════════════════════════════════════════
 //  DATA — All values in INIT
@@ -248,7 +249,10 @@ export default function Lobby({ onJoinTable }: LobbyProps) {
         <span>Band VRF</span>
         <span>Commit-Reveal</span>
         <span>Autosign</span>
-        <span style={{marginLeft:'auto',color:'#555'}}>Initia Testnet</span>
+        <span style={{marginLeft:'auto',color:'#555'}} title={POKER_GAME_ADDRESS}>
+          Contract {POKER_GAME_ADDRESS.slice(0,6)}…{POKER_GAME_ADDRESS.slice(-4)}
+        </span>
+        <span style={{color:'#555'}}>Initia Testnet</span>
       </div>
 
       {/* ═══ CASHIER MODAL ═══ */}
