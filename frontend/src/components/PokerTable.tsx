@@ -514,6 +514,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   )
   // Find a salt we stored earlier even if the handId window has shifted.
   // Try current expected, current-1, current+1 — covers any commit/deal race.
+  // Also fall back to scanning any remaining salts under our prefix so a
+  // sufficiently-aged-but-still-valid salt can still be recovered even after
+  // many lifecycle transitions (e.g. all-in runout ping-ponging handId).
   const lookupSalt = useCallback((): { key: string; value: `0x${string}` } | null => {
     if (!saltKeyPrefix) return null
     const candidates = [expectedHandId, expectedHandId - 1, expectedHandId + 1, handId, handId + 1, handId - 1]
@@ -523,14 +526,42 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       seen.add(hid)
       const k = `${saltKeyPrefix}${hid}`
       const v = getStoredValue(k) as `0x${string}` | null
-      if (v) return { key: k, value: v }
+      if (v) {
+        console.log('[SALT] found via candidate hid=', hid, 'key=', k)
+        return { key: k, value: v }
+      }
     }
+    // Last-resort: scan all keys under our prefix. This protects against the
+    // case where handId shifted more than ±1 during an all-in runout.
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (!k || !k.startsWith(saltKeyPrefix)) continue
+        const v = localStorage.getItem(k) as `0x${string}` | null
+        if (v) {
+          console.log('[SALT] found via prefix scan key=', k)
+          return { key: k, value: v }
+        }
+      }
+    }
+    console.warn('[SALT] not found. candidates=', Array.from(seen), 'prefix=', saltKeyPrefix)
     return null
   }, [saltKeyPrefix, expectedHandId, handId])
-  // Remove salts for hands that are clearly behind us (> 2 hands old).
+  // Remove salts for hands that are clearly behind us.
+  // Safety constraints:
+  //  * Never prune mid-hand (status 1..6). Storage is cheap and removing
+  //    here risks killing the salt we'll need for the upcoming reveal.
+  //  * Only prune in Waiting/Settled between hands.
+  //  * Keep a wide +-2 window around handId/expectedHandId to tolerate the
+  //    handId ping-pong that happens during all-in runout.
   const cleanupOldSalts = useCallback(() => {
     if (!saltKeyPrefix || typeof localStorage === 'undefined') return
-    const keep = new Set([handId, handId + 1, handId - 1, expectedHandId])
+    if (status !== 0 && status !== 7) return
+    const keep = new Set<number>()
+    for (let d = -2; d <= 2; d++) {
+      keep.add(handId + d)
+      keep.add(expectedHandId + d)
+    }
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i)
       if (!k || !k.startsWith(saltKeyPrefix)) continue
@@ -538,7 +569,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       if (!Number.isFinite(n) || keep.has(n)) continue
       try { localStorage.removeItem(k) } catch {}
     }
-  }, [saltKeyPrefix, handId, expectedHandId])
+  }, [saltKeyPrefix, handId, expectedHandId, status])
   // When a new hand starts (handId increments), wipe stale keys.
   useEffect(() => { cleanupOldSalts() }, [handId, cleanupOldSalts])
 
@@ -998,7 +1029,10 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         latestStatus = Number(latestSession[5])
       }
 
-      if (latestStatus !== 0 && latestStatus !== 7) {
+      // Busted players (stack=0) can always leave — they don't participate
+      // in the ongoing hand anyway, and the contract will simply prune them.
+      const myStakeNow = myPlayer?.chips ?? 0n
+      if (latestStatus !== 0 && latestStatus !== 7 && myStakeNow > 0n) {
         throw new Error('You can leave once the current hand finishes.')
       }
 
@@ -1205,7 +1239,17 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     // The early-return guard inside handleReveal re-checks on-chain isActive.
     if (status === 6 && myPlayer?.isActive && !myPlayer.hasRevealed) {
       const activeNow = allPlayers.filter(p => p.isActive)
-      if (activeNow.length >= 2 && hasAnyUsableSalt) {
+      if (activeNow.length < 2) {
+        console.log('[AUTO-REVEAL-SKIP] activeNow < 2 — falls to evaluate branch below')
+      } else if (!hasAnyUsableSalt) {
+        console.warn('[AUTO-REVEAL-SKIP] salt missing for handId=', handId, 'expected=', expectedHandId)
+        // Surface this as an error so the user isn't left staring at a
+        // silent "Revealing..." forever. The only recoverable path is to
+        // leave the table — the salt is gone, and the on-chain commitment
+        // can no longer be proven.
+        setDbgLastAction(`reveal-skip:no-salt h=${handId}`)
+        setLocalError(`Salt for hand ${handId} not found on this device. You can't reveal; other players may need to fold or timeout for this hand to settle.`)
+      } else {
         runAuto(handleReveal)
         return
       }
@@ -1439,29 +1483,54 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
               {/* Rebuy flow for busted player */}
               {canRebuyNow && !needsRoomDeposit && (
-                <button
-                  onClick={handleRebuy}
-                  style={st.btnPrimary}
-                  disabled={rebuying || leaving || txBusy}
-                  title="Release your seat and buy back in from your room balance"
-                >
-                  {rebuying ? 'Releasing seat...' : '\u2659 Rebuy'}
-                </button>
+                <>
+                  <button
+                    onClick={handleRebuy}
+                    style={st.btnPrimary}
+                    disabled={rebuying || leaving || txBusy}
+                    title="Release your seat and buy back in from your room balance"
+                  >
+                    {rebuying ? 'Releasing seat...' : '\u2659 Rebuy'}
+                  </button>
+                  <button
+                    onClick={() => setCashierOpen(true)}
+                    style={st.btnHelper}
+                    disabled={txBusy}
+                    title="Top up your room balance before rebuying"
+                  >
+                    {'\u229E'} Cashier
+                  </button>
+                </>
               )}
               {canRebuyNow && needsRoomDeposit && (
-                <button
-                  onClick={() => setCashierOpen(true)}
-                  style={st.btnPrimary}
-                  disabled={txBusy}
-                  title="Your room balance is too low for the minimum buy-in. Deposit more to rebuy."
-                >
-                  {'\u229E'} Deposit to room
-                </button>
+                <>
+                  <button
+                    onClick={() => setCashierOpen(true)}
+                    style={st.btnPrimary}
+                    disabled={txBusy}
+                    title={`Your room balance is too low. Minimum buy-in: ${minBuyInFloat.toFixed(2)} INIT`}
+                  >
+                    {'\u229E'} Deposit to Room
+                  </button>
+                  <span style={{ color: '#888', fontSize: '11px' }}>
+                    Need ≥ {minBuyInFloat.toFixed(2)} INIT to rebuy
+                  </span>
+                </>
               )}
               {isBustedAtTable && !handIsIdle && (
-                <span style={{ color: '#888', fontSize: '12px' }}>
-                  Rebuy available after hand settles
-                </span>
+                <>
+                  <span style={{ color: '#888', fontSize: '12px' }}>
+                    Rebuy available after hand settles
+                  </span>
+                  <button
+                    onClick={() => setCashierOpen(true)}
+                    style={st.btnHelper}
+                    disabled={txBusy}
+                    title="Top up your room balance while you wait"
+                  >
+                    {'\u229E'} Cashier
+                  </button>
+                </>
               )}
 
               {status >= 2 && status <= 5 && isActiveInHand && isMyTurn && (

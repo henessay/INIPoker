@@ -515,6 +515,37 @@ contract PokerGameTest is Test {
         assertEq(communityCount, 5, "Board should be fully revealed");
     }
 
+    function test_T33b_allIn_runout_bothReveal_evaluateSettles() public {
+        _join(alice, 4 ether);
+        _join(bob, 10 ether);
+        _commitTwo();
+        _deal();
+
+        // Heads-up all-in + call forces the runout and stops action.
+        vm.prank(alice);
+        game.playerAction(tableId, PokerLib.Action.AllIn, 0);
+        vm.prank(bob);
+        game.playerAction(tableId, PokerLib.Action.Call, 0);
+
+        // We should now be in Showdown with a full board.
+        ( , PokerLib.GameStatus s1, , , , , , uint8 cc, , , ) = game.getSession(tableId);
+        assertEq(uint8(s1), uint8(PokerLib.GameStatus.Showdown));
+        assertEq(cc, 5);
+
+        // Both players reveal — the salts committed via _commitTwo should
+        // still match the on-chain commitments after the runout.
+        vm.prank(alice);
+        game.revealHoleCards(tableId, ALICE_SALT);
+        vm.prank(bob);
+        game.revealHoleCards(tableId, BOB_SALT);
+
+        // evaluateShowdown settles the hand.
+        game.evaluateShowdown(tableId);
+
+        ( , PokerLib.GameStatus s2, , , , , , , , , ) = game.getSession(tableId);
+        assertEq(uint8(s2), uint8(PokerLib.GameStatus.Settled), "Hand should be Settled after evaluate");
+    }
+
     function test_T34_revert_checkWhenBetExists() public {
         _seatCommitDeal2();
         (, , , uint8 dealer,,,,,,, ) = game.getSession(tableId);
