@@ -679,59 +679,16 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     setActionPending(true)
     setLocalError(null)
 
-    // Check on-chain commitment first. If contract already has a commitment
-    // for us in this hand, we MUST reuse whatever salt we previously stored —
-    // never overwrite. Generating a fresh salt here would desync local vs
-    // on-chain and kill the reveal at showdown.
-    let onChainCommitment: `0x${string}` | null = null
-    try {
-      const ps = await publicClient.readContract({
-        address: POKER_GAME_ADDRESS,
-        abi: POKER_GAME_ABI,
-        functionName: 'getPlayerState',
-        args: [tableId, address],
-      }) as readonly unknown[]
-      // getPlayerState index 5 = holeCommitment (bytes32)
-      const c = ps[5] as `0x${string}`
-      if (c && c !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
-        onChainCommitment = c
-      }
-    } catch (probeErr) {
-      console.warn('[COMMIT] on-chain probe failed, continuing carefully:', probeErr)
-    }
-
+    // Idempotent commit: if we already have a local salt for this handId,
+    // reuse it. Never overwrite — a retry after a dropped tx must send the
+    // SAME hash, otherwise the contract will accept the new one and our
+    // old salt (which may have been committed on-chain already) is lost.
+    //
+    // NOTE: we do NOT probe holeCommitment on-chain here. That field
+    // persists from the previous deal (_resetSalts clears saltHash but not
+    // holeCommitment), so it would falsely look "already committed" for
+    // the NEW hand and block commit forever.
     const existingHex = getStoredValue(saltKey) as `0x${string}` | null
-
-    if (onChainCommitment) {
-      // Contract already has our commitment. Validate that our local salt
-      // hashes to it. If mismatch, local salt is unusable but we must NOT
-      // overwrite — other devices may hold the real salt.
-      if (existingHex) {
-        const check = keccak256(existingHex as `0x${string}`)
-        if (check.toLowerCase() === onChainCommitment.toLowerCase()) {
-          console.log('[COMMIT] on-chain commitment matches local salt — skipping re-commit')
-          addLog('Salt already committed (verified)')
-          setActionPending(false)
-          setTimeout(refreshAll, 500)
-          return
-        }
-        console.warn('[COMMIT] local salt MISMATCH with on-chain commitment. Leaving local salt intact — another device may hold the real one.')
-        setDbgLastError('Local salt does not match on-chain commitment — reveal may fail on this device')
-        setActionPending(false)
-        return
-      }
-      // Commitment exists but no local salt at all. Nothing to do here except
-      // flag it — a reveal from this device won't be possible.
-      console.warn('[COMMIT] on-chain commitment exists but no local salt — this device cannot reveal')
-      setDbgLastError('No local salt for this hand — reveal not possible on this device')
-      setActionPending(false)
-      return
-    }
-
-    // No on-chain commitment yet. Reuse an existing local salt if present
-    // (we may have generated it before and then failed a retry), otherwise
-    // create a fresh one. Write storage BEFORE tx so a mid-flight crash
-    // doesn't lose the secret.
     let hex: `0x${string}`
     if (existingHex) {
       console.log('[COMMIT] reusing existing local salt for', saltKey)
@@ -750,51 +707,25 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 180)
       const isAlreadyCommitted = /SaltAlreadyCommitted|Salt already/i.test(String(err?.message ?? err))
       if (isAlreadyCommitted) {
-        // Race: between our probe and tx, someone (peer / auto-loop) already
-        // committed. Our stored salt MAY be the right one (if we were the
-        // committer on another tab) or MAY NOT. Do NOT overwrite or delete
-        // it here — verify against the on-chain commitment and let it stay
-        // if matching. If we just now wrote a fresh salt above, though, it
-        // is almost certainly wrong and we should remove to avoid poisoning.
-        try {
-          const ps = await publicClient.readContract({
-            address: POKER_GAME_ADDRESS,
-            abi: POKER_GAME_ABI,
-            functionName: 'getPlayerState',
-            args: [tableId, address],
-          }) as readonly unknown[]
-          const c = ps[5] as `0x${string}`
-          const ok = keccak256(hex).toLowerCase() === c.toLowerCase()
-          if (!ok) {
-            // Our newly-written salt is wrong. But only strip it if we just
-            // generated it this call — otherwise it was pre-existing and may
-            // still be valid elsewhere.
-            if (!existingHex) {
-              console.warn('[COMMIT] SaltAlreadyCommitted and our fresh salt does not match — removing poisoned storage')
-              try { localStorage.removeItem(saltKey) } catch {}
-            } else {
-              console.warn('[COMMIT] SaltAlreadyCommitted and pre-existing salt does not match — leaving intact (may be valid on another device)')
-            }
-          } else {
-            console.log('[COMMIT] SaltAlreadyCommitted — our salt verifies, all good')
-            addLog('Salt already committed (verified)')
-          }
-        } catch {}
-      } else {
-        // Genuine commit failure — salt we may have just written is useless.
-        // Only strip if we generated fresh this call.
-        if (!existingHex) {
-          try { localStorage.removeItem(saltKey) } catch {}
-        }
+        // Our salt was already committed (race with peer / auto-loop retry).
+        // This is fine — the salt in localStorage is the one we committed.
+        console.log('[COMMIT] SaltAlreadyCommitted — our salt is already on-chain, skipping')
+        addLog('Salt already committed')
+        // Don't throw — this is a success path for the auto-loop.
+        return
       }
-      // Auto-loop retries: surface in debug only, not as a red banner.
+      // Genuine failure. If we JUST generated a fresh salt (not pre-existing),
+      // remove it so the next retry gets a clean slate.
+      if (!existingHex) {
+        try { localStorage.removeItem(saltKey) } catch {}
+      }
       setDbgLastError(msg)
       throw err
     } finally {
       setActionPending(false)
       setTimeout(refreshAll, 1000)
     }
-  }, [address, addLog, refreshAll, sWrite, saltKey, sessionAccount, tableId, publicClient])
+  }, [address, addLog, refreshAll, sWrite, saltKey, sessionAccount, tableId])
 
   const handleDeal = useCallback(async () => {
     if (!address) return
