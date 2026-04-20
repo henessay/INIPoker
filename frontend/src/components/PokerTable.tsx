@@ -616,6 +616,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (isSettledOrWaiting) {
       autoBusyRef.current = false
       lastAutoKeyRef.current = null
+      // Hard reset stuck local busy flags on entering idle. If a previous
+      // tx promise got dropped (wallet close, network blip), actionPending
+      // might still be true and block the auto-loop forever. Clearing here
+      // is safe because genuine pending txs inside mid-hand never reach
+      // this branch — we gate on status === 0 || 7.
+      if (actionPending) {
+        console.log('[SETTLED-CLEAR] actionPending was true — force-clearing')
+        setActionPending(false)
+      }
     }
     if (localStatus && /Revealing|Evaluating|Settling|Waiting for showdown/i.test(localStatus)) {
       setLocalStatus(null)
@@ -627,7 +636,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (dbgLastError && stalePattern.test(dbgLastError)) {
       setDbgLastError(null)
     }
-  }, [localError, localStatus, dbgLastError, status, allPlayers])
+  }, [localError, localStatus, dbgLastError, status, allPlayers, actionPending])
 
   // Wipe stale reveal/salt errors on handId bump — a new hand must not
   // inherit the previous hand's red warnings in the UI.
@@ -1546,13 +1555,17 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
       refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, tableBusy, actionPending, sittingDown, leaving, lookupSalt])
 
-  // Watchdog: every 2s check if we've been stuck. Two stall modes:
+  // Watchdog: every 2s check if we've been stuck. Three stall modes:
   //   (1) autoBusyRef=true for >8s in same state — an action never completed
   //   (2) autoBusyRef=false but lastAutoKeyRef locked on current state for >8s
   //       — we "handled" this stateKey but state didn't progress, meaning
   //       the action silently didn't actually change anything on-chain
-  // Either way: clear both refs and force a retry.
+  //   (3) actionPending=true for >5s in Settled/Waiting (idle) — a previous
+  //       tx promise never resolved (wallet popup dismissed / dropped) and
+  //       is now blocking the entire auto-loop from starting the next hand
+  // Any of these: clear relevant state and force a retry.
   const watchdogStateRef = useRef<{ key: string; at: number }>({ key: '', at: 0 })
+  const actionPendingSinceRef = useRef<number>(0)
   useEffect(() => {
     if (!isSeated || !sessionAccount) return
     const interval = setInterval(() => {
@@ -1560,7 +1573,6 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       const now = Date.now()
       if (watchdogStateRef.current.key !== key) {
         watchdogStateRef.current = { key, at: now }
-        return
       }
       const stuckMs = now - watchdogStateRef.current.at
       const stuckBusy = autoBusyRef.current && stuckMs > 8000
@@ -1572,9 +1584,25 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         refreshAll()
         watchdogStateRef.current.at = now
       }
+      // Self-heal stuck actionPending in idle phases. Only fires during
+      // Settled/Waiting where no legit table tx should take long. During
+      // mid-hand statuses a short actionPending is a normal tx wait and
+      // must not be force-cleared.
+      if (actionPending) {
+        if (actionPendingSinceRef.current === 0) actionPendingSinceRef.current = now
+        const pendingFor = now - actionPendingSinceRef.current
+        if ((status === 0 || status === 7) && pendingFor > 5_000) {
+          console.warn(`[WATCHDOG] actionPending stuck ${pendingFor}ms in idle status=${status} — clearing to unblock auto-loop`)
+          setActionPending(false)
+          actionPendingSinceRef.current = 0
+          refreshAll()
+        }
+      } else {
+        actionPendingSinceRef.current = 0
+      }
     }, 2000)
     return () => clearInterval(interval)
-  }, [handId, status, saltsCommitted, communityCount, isSeated, sessionAccount, refreshAll])
+  }, [handId, status, saltsCommitted, communityCount, isSeated, sessionAccount, actionPending, refreshAll])
 
   // Track how long we've been stuck in Dealing (VRF callback pending).
   // If longer than 20s, surface a clear UI warning.
