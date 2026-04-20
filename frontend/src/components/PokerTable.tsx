@@ -1555,19 +1555,6 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
       refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, tableBusy, actionPending, sittingDown, leaving, lookupSalt])
 
-  // Independent heartbeat: refetch chain state every 3s regardless of what
-  // the auto-loop / watchdog are doing. wagmi already polls on refetchInterval,
-  // but in practice refetch queues can stall when a previous read gets stuck
-  // (RPC reset, chain reorg). This ensures drift between clients (one sees
-  // handId=3, the other still handId=2 after a new hand started) clears fast.
-  useEffect(() => {
-    if (!isSeated && !sessionAccount) return
-    const t = setInterval(() => {
-      refreshAll()
-    }, 3000)
-    return () => clearInterval(t)
-  }, [isSeated, sessionAccount, refreshAll])
-
   // Watchdog: every 2s check if we've been stuck. Three stall modes:
   //   (1) autoBusyRef=true for >8s in same state — an action never completed
   //   (2) autoBusyRef=false but lastAutoKeyRef locked on current state for >8s
