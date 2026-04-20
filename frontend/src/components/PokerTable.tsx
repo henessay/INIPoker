@@ -501,6 +501,10 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const [rebuying, setRebuying] = useState(false)
 
   const txBusy = actionPending || sittingDown || leaving || mainWritePending
+  // Narrow flag for the auto-loop: table/session transactions only. Excludes
+  // mainWritePending because stuck main-wallet pendings (Keplr popups, stale
+  // wagmi state) must never wedge the hand lifecycle.
+  const tableBusy = actionPending || sittingDown || leaving
 
   // Salt storage scheme:
   //   During Waiting(0)/Settled(7), commit applies to the NEXT hand.
@@ -613,13 +617,32 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       autoBusyRef.current = false
       lastAutoKeyRef.current = null
     }
-    if (localStatus && /Revealing|Evaluating|Settling/i.test(localStatus)) {
+    if (localStatus && /Revealing|Evaluating|Settling|Waiting for showdown/i.test(localStatus)) {
       setLocalStatus(null)
     }
-    if (localError && /revealHoleCardsFor|evaluateShowdown|Missing or invalid parameters|would revert/i.test(localError)) {
+    const stalePattern = /revealHoleCardsFor|evaluateShowdown|Missing or invalid parameters|would revert|No local salt|Salt not found|Local salt|Salt for hand/i
+    if (localError && stalePattern.test(localError)) {
       setLocalError(null)
     }
-  }, [localError, localStatus, status, allPlayers])
+    if (dbgLastError && stalePattern.test(dbgLastError)) {
+      setDbgLastError(null)
+    }
+  }, [localError, localStatus, dbgLastError, status, allPlayers])
+
+  // Wipe stale reveal/salt errors on handId bump — a new hand must not
+  // inherit the previous hand's red warnings in the UI.
+  const prevHandIdRef = useRef<number>(handId)
+  useEffect(() => {
+    if (handId !== prevHandIdRef.current) {
+      prevHandIdRef.current = handId
+      const stalePattern = /revealHoleCardsFor|evaluateShowdown|Missing or invalid parameters|would revert|No local salt|Salt not found|Local salt|Salt for hand/i
+      if (localError && stalePattern.test(localError)) setLocalError(null)
+      if (dbgLastError && stalePattern.test(dbgLastError)) setDbgLastError(null)
+      if (localStatus && /Revealing|Evaluating|Settling|Waiting for showdown/i.test(localStatus)) {
+        setLocalStatus(null)
+      }
+    }
+  }, [handId, localError, dbgLastError, localStatus])
 
   const doAction = useCallback(async (fnName: string, args: unknown[], label: string) => {
     setActionPending(true)
@@ -755,7 +778,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           try { localStorage.removeItem(saltKey) } catch {}
         }
       }
-      setLocalError(msg)
+      // Auto-loop retries: surface in debug only, not as a red banner.
+      setDbgLastError(msg)
       throw err
     } finally {
       setActionPending(false)
@@ -805,7 +829,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       } catch (probeErr) {
         console.warn('[DEAL] probe after revert failed:', probeErr)
       }
-      setLocalError(msg.slice(0, 180))
+      setDbgLastError(msg.slice(0, 180))
       throw err
     } finally {
       setActionPending(false)
@@ -886,8 +910,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       } catch (probeErr) {
         console.warn('[REVEAL] probe after revert failed:', probeErr)
       }
-      // Genuine failure — surface and rethrow so auto-loop retries.
-      setLocalError(msg.slice(0, 180))
+      // Genuine failure — surface in debug and rethrow so auto-loop retries.
+      setDbgLastError(msg.slice(0, 180))
       throw err
     } finally {
       setActionPending(false)
@@ -929,7 +953,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       } catch (probeErr) {
         console.warn('[EVALUATE] probe after revert failed:', probeErr)
       }
-      setLocalError(msg.slice(0, 180))
+      setDbgLastError(msg.slice(0, 180))
       throw err
     } finally {
       setActionPending(false)
@@ -947,8 +971,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       addLog('Forced showdown timeout — hand resolved')
     } catch (err: any) {
       const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 220)
+      // Recovery path: stay in debug only. The user sees a calm "Recovering..." status.
       setDbgLastError(msg)
-      setLocalError(msg)
     } finally {
       setActionPending(false)
       setTimeout(refreshAll, 1500)
@@ -1318,7 +1342,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       return
     }
     if (autoLeaveFiredRef.current) return
-    if (!sessionAccount || !address || rebuying || leaving || txBusy) return
+    if (!sessionAccount || !address || rebuying || leaving || tableBusy) return
     // Don't release a seat we never saw chipped-up on — that's the
     // right-after-join race window.
     if (!hadChipsRef.current) return
@@ -1350,7 +1374,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           console.warn('[BUSTED] auto-leave failed:', m)
         }
       })
-  }, [isBustedAtTable, handIsIdle, isSeated, myStake, sessionAccount, address, rebuying, leaving, txBusy, sWrite, tableId, addLog, refreshAll])
+  }, [isBustedAtTable, handIsIdle, isSeated, myStake, sessionAccount, address, rebuying, leaving, tableBusy, sWrite, tableId, addLog, refreshAll])
 
   const handleCloseSession = useCallback(() => {
     if (isSeated) return
@@ -1367,7 +1391,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   }, [isSeated, saltKeyPrefix, sessionKey])
 
   useEffect(() => {
-    if (!sessionAccount || !address || !isSeated || !saltKeyPrefix || autoBusyRef.current || txBusy) {
+    if (!sessionAccount || !address || !isSeated || !saltKeyPrefix || autoBusyRef.current || tableBusy) {
       if (isSeated && sessionAccount && (status === 0 || status === 7)) {
         const reasons = [
           !sessionAccount && 'no-session',
@@ -1375,7 +1399,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           !isSeated && 'not-seated',
           !saltKeyPrefix && 'no-saltPrefix',
           autoBusyRef.current && 'autoBusy',
-          txBusy && 'txBusy',
+          tableBusy && 'tableBusy', actionPending && 'aP', sittingDown && 'sD', leaving && 'lv',
         ].filter(Boolean).join(',')
         console.log('[AUTO-GUARD] blocked by:', reasons)
         setDbgLastAction(`guard:${reasons}`)
@@ -1520,7 +1544,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     }
   }, [address, allPlayers, communityCount, handleCommit, handleDeal, handleEvaluate, handleReveal,
       handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
-      refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, txBusy, lookupSalt])
+      refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, tableBusy, actionPending, sittingDown, leaving, lookupSalt])
 
   // Watchdog: every 2s check if we've been stuck. Two stall modes:
   //   (1) autoBusyRef=true for >8s in same state — an action never completed
@@ -1584,7 +1608,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         // Start nudging the timeout path earlier. The contract still enforces
         // block-based actionTimeout, so premature calls are harmless reverts
         // that only show up in debug.
-        if (stuckFor > 12_000 && sessionAccount && !autoBusyRef.current && !txBusy) {
+        if (stuckFor > 12_000 && sessionAccount && !autoBusyRef.current && !tableBusy) {
           const sinceLastTry = Date.now() - forceAutoFiredRef.current
           if (sinceLastTry > 8_000) {
             forceAutoFiredRef.current = Date.now()
@@ -1602,7 +1626,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     showdownEnteredAtRef.current = 0
     forceAutoFiredRef.current = 0
     if (showdownStuck) setShowdownStuck(false)
-  }, [status, showdownStuck, sessionAccount, txBusy, handleForceShowdownTimeout])
+  }, [status, showdownStuck, sessionAccount, tableBusy, handleForceShowdownTimeout])
 
   const [timeLeft, setTimeLeft] = useState(45)
   const turnStartRef = useRef<number>(0)
@@ -1648,6 +1672,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       </div>
 
       {(localStatus || sessionStatus) && <div style={st.banner}>{'\u23F3'} {localStatus || sessionStatus}</div>}
+
+      {status === 6 && showdownStuck && (
+        <div style={{ ...st.banner, color: '#7ECFB3' }}>
+          {'\u23F3'} {'Settling hand\u2026 recovering showdown automatically.'}
+        </div>
+      )}
 
       {isSeatedAsZombie && <div style={{ ...st.banner, color: '#E07070' }}>This hand has you folded. Your seat stays reserved until showdown settles.</div>}
       {isBustedAtTable && !handIsIdle && (
