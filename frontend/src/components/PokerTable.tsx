@@ -5,6 +5,7 @@ import {
 } from 'viem'
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
 import { useAccount, useReadContract, useReadContracts, useSendTransaction, useWriteContract } from 'wagmi'
+import { useQueryClient } from '@tanstack/react-query'
 import { POKER_GAME_ADDRESS, POKER_GAME_ABI } from '../config/contract'
 import { useWalletBalance } from '../hooks/useWalletBalance'
 import CashierModal from './CashierModal'
@@ -21,6 +22,158 @@ const INIPOKER_CHAIN = {
 
 const GAS_RESERVE_WEI = parseEther('0.3')
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000'
+
+// ─────────────────────────────────────────────────────────────────────
+// Typed session view
+//
+// The contract exposes Session as a public struct, so wagmi/viem call
+// that auto-getter `sessions(tableId)` returns a tuple where fields are
+// accessed by *position*. Scattering those magic indices across the
+// component makes off-by-one bugs invisible (and we hit one: sess[14]
+// vs sess[10] for currentBet). Centralise the shape + decoder here so
+// every call site talks in named fields — any later ABI shift breaks
+// in ONE place instead of sixteen.
+//
+// Session return order (from PokerGame.sol Session struct / ABI):
+//   0  tableId           uint256
+//   1  handId            uint256
+//   2  maxPlayers        uint8
+//   3  minBuyIn          uint256
+//   4  maxBuyIn          uint256
+//   5  status            uint8   (GameStatus enum: 0=Waiting..7=Settled)
+//   6  dealerIndex       uint8
+//   7  activePlayerIndex uint8
+//   8  playerCount       uint8
+//   9  pot               uint256
+//   10 currentBet        uint256
+//   11 smallBlind        uint256
+//   12 bigBlind          uint256
+//   13 vrfPending        bool
+//   14 vrfRequestBlock   uint256
+//   15 deckSeed          bytes32
+//   16 deckCommitment    bytes32
+//   17 deckCursor        uint8
+//   18 communityCount    uint8
+//   19 saltsCommitted    uint8
+//   20 saltsRevealed     uint8
+//   21 lastActionBlock   uint256
+//   22 actionTimeout     uint256
+// NB: uint8[5] community is NOT in the ABI outputs — it's omitted from
+// the public getter by solc.
+interface SessionView {
+  tableId: bigint
+  handId: number
+  maxPlayers: number
+  minBuyIn: bigint
+  maxBuyIn: bigint
+  status: number
+  dealerIndex: number
+  activePlayerIndex: number
+  playerCount: number
+  pot: bigint
+  currentBet: bigint
+  smallBlind: bigint
+  bigBlind: bigint
+  vrfPending: boolean
+  vrfRequestBlock: bigint
+  deckSeed: `0x${string}`
+  deckCommitment: `0x${string}`
+  deckCursor: number
+  communityCount: number
+  saltsCommitted: number
+  saltsRevealed: number
+  lastActionBlock: bigint
+  actionTimeout: bigint
+}
+
+const EMPTY_HASH: `0x${string}` = '0x0000000000000000000000000000000000000000000000000000000000000000'
+
+function decodeSession(raw: readonly any[] | undefined): SessionView | null {
+  if (!raw || raw.length < 21) return null
+  const n = (v: any) => Number(v ?? 0)
+  const b = (v: any) => BigInt(v ?? 0n)
+  return {
+    tableId: b(raw[0]),
+    handId: n(raw[1]),
+    maxPlayers: n(raw[2]),
+    minBuyIn: b(raw[3]),
+    maxBuyIn: b(raw[4]),
+    status: n(raw[5]),
+    dealerIndex: n(raw[6]),
+    activePlayerIndex: n(raw[7]),
+    playerCount: n(raw[8]),
+    pot: b(raw[9]),
+    currentBet: b(raw[10]),
+    smallBlind: b(raw[11]),
+    bigBlind: b(raw[12]),
+    vrfPending: Boolean(raw[13]),
+    vrfRequestBlock: b(raw[14]),
+    deckSeed: (raw[15] as `0x${string}`) ?? EMPTY_HASH,
+    deckCommitment: (raw[16] as `0x${string}`) ?? EMPTY_HASH,
+    deckCursor: n(raw[17]),
+    communityCount: n(raw[18]),
+    saltsCommitted: n(raw[19]),
+    saltsRevealed: n(raw[20]),
+    lastActionBlock: b(raw[21]),
+    actionTimeout: b(raw[22]),
+  }
+}
+
+// PlayerState return order (from getPlayerState):
+//   0 chips         uint256
+//   1 currentBet    uint256
+//   2 lastAction    uint8
+//   3 isActive      bool
+//   4 seatIndex     uint8
+//   5 holeCommitment bytes32
+//   6 hasRevealed   bool
+//   7 handRank      uint8
+interface PlayerView {
+  chips: bigint
+  currentBet: bigint
+  lastAction: number
+  isActive: boolean
+  seatIndex: number
+  holeCommitment: `0x${string}`
+  hasRevealed: boolean
+  handRank: number
+}
+function decodePlayer(raw: readonly any[] | undefined): PlayerView | null {
+  if (!raw || raw.length < 8) return null
+  return {
+    chips: BigInt(raw[0] ?? 0n),
+    currentBet: BigInt(raw[1] ?? 0n),
+    lastAction: Number(raw[2] ?? 0),
+    isActive: Boolean(raw[3]),
+    seatIndex: Number(raw[4] ?? 0),
+    holeCommitment: (raw[5] as `0x${string}`) ?? EMPTY_HASH,
+    hasRevealed: Boolean(raw[6]),
+    handRank: Number(raw[7] ?? 0),
+  }
+}
+
+// Helpers that wrap raw readContract calls with typed decoders.
+// Every on-chain probe in the component goes through these so the
+// magic-index vocabulary is gone.
+async function readSessionView(client: any, tableId: bigint): Promise<SessionView | null> {
+  const raw = await client.readContract({
+    address: POKER_GAME_ADDRESS,
+    abi: POKER_GAME_ABI,
+    functionName: 'sessions',
+    args: [tableId],
+  }) as readonly any[]
+  return decodeSession(raw)
+}
+
+async function readPlayerView(client: any, tableId: bigint, player: `0x${string}`): Promise<PlayerView | null> {
+  const raw = await client.readContract({
+    address: POKER_GAME_ADDRESS,
+    abi: POKER_GAME_ABI,
+    functionName: 'getPlayerState',
+    args: [tableId, player],
+  }) as readonly any[]
+  return decodePlayer(raw)
+}
 
 const SUITS = ['\u2660', '\u2665', '\u2666', '\u2663'] as const
 const SUIT_COLORS = ['#0a0a0a', '#c41e1e', '#c41e1e', '#0a0a0a'] as const
@@ -299,7 +452,20 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   const publicClient = useMemo(() => createPublicClient({
     chain: INIPOKER_CHAIN as any,
-    transport: http(RPC_URL_WRITE),
+    // Disable viem's internal cache — every readContract MUST hit the RPC.
+    // Stale reads were a primary cause of client-client handId desync.
+    cacheTime: 0,
+    // Also disable request batching; batched requests occasionally coalesce
+    // with stale responses on this L2.
+    transport: http(RPC_URL_WRITE, {
+      batch: false,
+      retryCount: 2,
+      retryDelay: 150,
+      fetchOptions: {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-store', 'Pragma': 'no-cache' },
+      },
+    }),
   }), [])
 
   const sWrite = useCallback(async (fnName: string, args: unknown[], value?: bigint, gasHint = 600_000n, skipSimulate = false): Promise<`0x${string}`> => {
@@ -368,19 +534,22 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   })
 
   const fs = fullSession as readonly any[] | undefined
-  const handId = fs ? Number(fs[1]) : 0
-  const status = fs ? Number(fs[5]) : 0
-  const dealerIndex = fs ? Number(fs[6]) : 0
-  const activePlayerIdx = fs ? Number(fs[7]) : 0
-  const rawPlayerCount = fs ? Number(fs[8]) : 0
-  const pot = fs ? (fs[9] as bigint) : 0n
-  const currentBet = fs ? (fs[10] as bigint) : 0n
-  const smallBlind = fs ? (fs[11] as bigint) : 0n
-  const bigBlindWei = fs ? (fs[12] as bigint) : parseEther(bigBlind.toString())
-  const vrfPending = fs ? Boolean(fs[13]) : false
-  const deckSeed = fs ? (fs[15] as `0x${string}`) : ('0x0' as `0x${string}`)
-  const communityCount = fs ? Number(fs[18]) : 0
-  const saltsCommitted = fs ? Number(fs[19]) : 0
+  // Decode once into a named-field view. Every top-level read below now
+  // uses `sv.handId` / `sv.status` rather than magic indices.
+  const sv = decodeSession(fs)
+  const handId = sv?.handId ?? 0
+  const status = sv?.status ?? 0
+  const dealerIndex = sv?.dealerIndex ?? 0
+  const activePlayerIdx = sv?.activePlayerIndex ?? 0
+  const rawPlayerCount = sv?.playerCount ?? 0
+  const pot = sv?.pot ?? 0n
+  const currentBet = sv?.currentBet ?? 0n
+  const smallBlind = sv?.smallBlind ?? 0n
+  const bigBlindWei = sv?.bigBlind ?? parseEther(bigBlind.toString())
+  const vrfPending = sv?.vrfPending ?? false
+  const deckSeed = sv?.deckSeed ?? EMPTY_HASH
+  const communityCount = sv?.communityCount ?? 0
+  const saltsCommitted = sv?.saltsCommitted ?? 0
   const community = (communityData ? Array.from(communityData as any) : [0, 0, 0, 0, 0]) as number[]
 
   const playerAddrs = ((players as readonly `0x${string}`[] | undefined) ?? []).filter(addr => addr.toLowerCase() !== ZERO_ADDR)
@@ -426,6 +595,22 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     refetchRevealed()
     refetchBal()
   }, [refetchSession, refetchPlayers, refetchStates, refetchRevealed, refetchBal])
+
+  // hardRefresh: drops React-Query cache for all readContract queries on
+  // this table, forcing a fresh RPC hit on the next render. Use after
+  // critical transitions (peer started hand, fold settled, deal confirmed)
+  // where normal refetchInterval is too slow and stale cache would cause
+  // the two clients to disagree on handId / status.
+  const qc = useQueryClient()
+  const hardRefresh = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ['readContract'] })
+    qc.invalidateQueries({ queryKey: ['readContracts'] })
+    refetchSession()
+    refetchPlayers()
+    refetchStates()
+    refetchRevealed()
+    refetchBal()
+  }, [qc, refetchSession, refetchPlayers, refetchStates, refetchRevealed, refetchBal])
 
   const myPlayer = allPlayers.find(p => p.addr.toLowerCase() === address?.toLowerCase())
   const isSeated = !!myPlayer
@@ -594,6 +779,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const [dbgLastAction, setDbgLastAction] = useState<string>('—')
   const [dbgDealAttempts, setDbgDealAttempts] = useState(0)
   const [dbgLastError, setDbgLastError] = useState<string | null>(null)
+  // Desync detection: when peer has started a new hand but our wagmi cache
+  // is still on the old one, we freeze auto-loop and force resync.
+  const [resyncingHand, setResyncingHand] = useState<boolean>(false)
+  const [dbgOnChainHandId, setDbgOnChainHandId] = useState<number>(0)
+  const [dbgOnChainStatus, setDbgOnChainStatus] = useState<number>(0)
+  const lastProbeRef = useRef<number>(0)
   // Watchdog: if the on-chain state doesn't progress for a while but the loop
   // thinks it already acted, force a retry by clearing the key.
   const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -664,18 +855,20 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     // ABI has no custom-error definitions for the real revert cause.
     if (fnName === 'playerActionFor' && address) {
       try {
-        const [sess, players, ps] = await Promise.all([
-          publicClient.readContract({ address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'sessions', args: [tableId] }) as Promise<readonly any[]>,
+        const [sv2, players, pv] = await Promise.all([
+          readSessionView(publicClient, tableId),
           publicClient.readContract({ address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayers', args: [tableId] }) as Promise<readonly `0x${string}`[]>,
-          publicClient.readContract({ address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayerState', args: [tableId, address] }) as Promise<readonly any[]>,
+          readPlayerView(publicClient, tableId, address),
         ])
-        const onChainStatus = Number(sess[5])
-        const onChainActiveIdx = Number(sess[7])
-        const onChainCurrentBet = BigInt(sess[10] ?? 0n)
+        if (!sv2 || !pv) throw new Error('Preflight decode failed')
+        console.log('[PREFLIGHT] source=sessions(view) hid=', sv2.handId, 'st=', sv2.status, 'active=', sv2.activePlayerIndex)
+        const onChainStatus = sv2.status
+        const onChainActiveIdx = sv2.activePlayerIndex
+        const onChainCurrentBet = sv2.currentBet
         const onChainActivePlayer = players[onChainActiveIdx]?.toLowerCase()
-        const myChips = BigInt(ps[0] ?? 0n)
-        const myCurrentBet = BigInt(ps[1] ?? 0n)
-        const myIsActive = Boolean(ps[3])
+        const myChips = pv.chips
+        const myCurrentBet = pv.currentBet
+        const myIsActive = pv.isActive
         const actionCode = Number(args[2])
         const actionAmount = BigInt(args[3] as any)
         let reason: string | null = null
@@ -792,22 +985,25 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       // status advanced past Waiting/Settled (or vrfPending) before silently
       // accepting. Otherwise rethrow so auto-loop clears lock and retries.
       try {
-        const sess = await publicClient.readContract({
-          address: POKER_GAME_ADDRESS,
-          abi: POKER_GAME_ABI,
-          functionName: 'sessions',
-          args: [tableId],
-        }) as readonly unknown[]
-        const onChainStatus = Number(sess[5])
-        const vrfPendingOnChain = Boolean(sess[13])
+        const sv2 = await readSessionView(publicClient, tableId)
+        if (!sv2) throw new Error('Decode failed')
+        const onChainStatus = sv2.status
+        const vrfPendingOnChain = sv2.vrfPending
         if ((onChainStatus !== 0 && onChainStatus !== 7) || vrfPendingOnChain) {
-          console.log('[AUTO] deal benign race — on-chain status=', onChainStatus, 'vrfPending=', vrfPendingOnChain)
+          console.log('[AUTO] deal benign race — on-chain status=', onChainStatus, 'vrfPending=', vrfPendingOnChain, 'hid=', sv2.handId)
           addLog('Hand started (by peer)')
           setLocalError(null)
           setLocalStatus(null)
+          setDbgLastError(null)
           autoBusyRef.current = false
           lastAutoKeyRef.current = null
-          setTimeout(refreshAll, 250)
+          dealFollowerWaitRef.current = 0
+          // Force resync mode — blocks auto-loop until wagmi catches up.
+          setResyncingHand(true)
+          // Aggressive hard-refetch cascade (clears cache + refetches).
+          setTimeout(hardRefresh, 100)
+          setTimeout(hardRefresh, 800)
+          setTimeout(hardRefresh, 1800)
           return
         }
       } catch (probeErr) {
@@ -829,14 +1025,10 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     // keeps the auto-loop spinning on the same dead state. Cheap on-chain
     // re-check so a stale wagmi cache doesn't let us through.
     try {
-      const ps = await publicClient.readContract({
-        address: POKER_GAME_ADDRESS,
-        abi: POKER_GAME_ABI,
-        functionName: 'getPlayerState',
-        args: [tableId, address],
-      }) as readonly unknown[]
-      const isActiveOnChain = Boolean(ps[3])     // getPlayerState.isActive
-      const hasRevealedOnChain = Boolean(ps[6])  // getPlayerState.hasRevealed
+      const pv2 = await readPlayerView(publicClient, tableId, address)
+      if (!pv2) throw new Error('Decode failed')
+      const isActiveOnChain = pv2.isActive
+      const hasRevealedOnChain = pv2.hasRevealed
       if (!isActiveOnChain || hasRevealedOnChain) {
         console.log('[REVEAL] skipped — isActive=', isActiveOnChain, 'hasRevealed=', hasRevealedOnChain)
         return
@@ -866,22 +1058,13 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       // which means a peer really did advance the state. Otherwise the revert
       // is a genuine failure and must propagate so auto-loop retries.
       try {
-        const [ps, sess] = await Promise.all([
-          publicClient.readContract({
-            address: POKER_GAME_ADDRESS,
-            abi: POKER_GAME_ABI,
-            functionName: 'getPlayerState',
-            args: [tableId, address],
-          }) as Promise<readonly unknown[]>,
-          publicClient.readContract({
-            address: POKER_GAME_ADDRESS,
-            abi: POKER_GAME_ABI,
-            functionName: 'sessions',
-            args: [tableId],
-          }) as Promise<readonly unknown[]>,
+        const [pv2, sv2] = await Promise.all([
+          readPlayerView(publicClient, tableId, address),
+          readSessionView(publicClient, tableId),
         ])
-        const hasRevealedOnChain = Boolean(ps[6]) // getPlayerState.hasRevealed
-        const onChainStatus = Number(sess[5])     // Session.status
+        if (!pv2 || !sv2) throw new Error('Decode failed')
+        const hasRevealedOnChain = pv2.hasRevealed
+        const onChainStatus = sv2.status
         if (hasRevealedOnChain || onChainStatus !== 6) {
           console.log('[AUTO] reveal benign race — hasRevealed=', hasRevealedOnChain, 'status=', onChainStatus)
           setLocalError(null)
@@ -915,13 +1098,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       // out of Showdown (to Settled or Waiting). Otherwise rethrow so auto-loop
       // sees the failure, clears locks, and retries.
       try {
-        const sess = await publicClient.readContract({
-          address: POKER_GAME_ADDRESS,
-          abi: POKER_GAME_ABI,
-          functionName: 'sessions',
-          args: [tableId],
-        }) as readonly unknown[]
-        const onChainStatus = Number(sess[5])
+        const sv2 = await readSessionView(publicClient, tableId)
+        if (!sv2) throw new Error('Decode failed')
+        const onChainStatus = sv2.status
         // status 0=Waiting, 6=Showdown, 7=Settled. Anything other than Showdown
         // means a peer already advanced the hand.
         if (onChainStatus !== 6) {
@@ -995,14 +1174,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       let iHaveChipsOnChain = false
       if (iAmOnChain) {
         try {
-          const ps = await publicClient.readContract({
-            address: POKER_GAME_ADDRESS,
-            abi: POKER_GAME_ABI,
-            functionName: 'getPlayerState',
-            args: [tableId, address],
-          }) as readonly unknown[]
-          // getPlayerState returns (stake, currentBet, lastAction, isActive, seatIndex, holeCommitment, hasRevealed, handRank)
-          iHaveChipsOnChain = (ps[0] as bigint) > 0n
+          const pv2 = await readPlayerView(publicClient, tableId, address)
+          iHaveChipsOnChain = (pv2?.chips ?? 0n) > 0n
         } catch {}
       }
       console.log('[SIT-DOWN] iAmOnChain=', iAmOnChain, 'iHaveChipsOnChain=', iHaveChipsOnChain)
@@ -1070,13 +1243,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         }
       }
 
-      const onChainSession = await publicClient.readContract({
-        address: POKER_GAME_ADDRESS,
-        abi: POKER_GAME_ABI,
-        functionName: 'sessions',
-        args: [tableId],
-      }) as readonly any[]
-      const tableStatus = Number(onChainSession[5])
+      const sv2 = await readSessionView(publicClient, tableId)
+      if (!sv2) throw new Error('Could not read table state')
+      const tableStatus = sv2.status
       if (tableStatus !== 0 && tableStatus !== 7) {
         throw new Error(`Cannot join while a hand is in progress (${STATUS_LABELS[tableStatus]}).`)
       }
@@ -1183,13 +1352,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         }
       }
 
-      let latestSession = await publicClient.readContract({
-        address: POKER_GAME_ADDRESS,
-        abi: POKER_GAME_ABI,
-        functionName: 'sessions',
-        args: [tableId],
-      }) as readonly any[]
-      latestStatus = Number(latestSession[5])
+      let latestView = await readSessionView(publicClient, tableId)
+      latestStatus = latestView?.status ?? 0
 
       if (latestStatus === 6) {
         const latestPlayers = await publicClient.readContract({
@@ -1226,13 +1390,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
             console.warn('[LEAVE] evaluate failed:', e)
           }
         }
-        latestSession = await publicClient.readContract({
-          address: POKER_GAME_ADDRESS,
-          abi: POKER_GAME_ABI,
-          functionName: 'sessions',
-          args: [tableId],
-        }) as readonly any[]
-        latestStatus = Number(latestSession[5])
+        latestView = await readSessionView(publicClient, tableId)
+        latestStatus = latestView?.status ?? 0
       }
 
       // Busted players (stack=0) can always leave — they don't participate
@@ -1397,6 +1556,20 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     const iHaveChips = (myPlayer?.chips ?? 0n) > 0n
 
     const stateKey = `${handId}-${status}-${saltsCommitted}-${communityCount}-${activeCount}-${myPlayer?.hasRevealed ? 'r' : 'n'}`
+    // Desync guard: chain is ahead (e.g. peer already started new hand).
+    // Do NOT fire commit/deal on stale state — just wait for refetch.
+    if (resyncingHand) {
+      console.log('[AUTO-SKIP] resyncingHand=true — waiting for refetch to catch up')
+      setDbgLastAction(`resync:${handId}/${status}→${dbgOnChainHandId}/${dbgOnChainStatus}`)
+      return
+    }
+    // Additional pre-guard: if our local onChain probe shows chain ahead but
+    // wagmi cache hasn't updated yet, skip this tick. Probe runs every 3s.
+    if (lastProbeRef.current > 0 && (dbgOnChainHandId > handId || (dbgOnChainHandId === handId && (status === 0 || status === 7) && dbgOnChainStatus >= 2 && dbgOnChainStatus <= 5))) {
+      console.log('[AUTO-SKIP] chain ahead of cache, wait for refetch. local=', handId, '/', status, 'chain=', dbgOnChainHandId, '/', dbgOnChainStatus)
+      setDbgLastAction(`desync-wait:${handId}→${dbgOnChainHandId}`)
+      return
+    }
     if (lastAutoKeyRef.current === stateKey) {
       if (status === 0 || status === 7) {
         console.log('[AUTO-SKIP] stateKey unchanged:', stateKey)
@@ -1497,11 +1670,8 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
             // Fallback for the rare case where settleLastStanding itself
             // reverts (e.g. table already advanced): probe status.
             try {
-              const sess = await publicClient.readContract({
-                address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI,
-                functionName: 'sessions', args: [tableId],
-              }) as readonly unknown[]
-              if (Number(sess[5]) !== 6) {
+              const sv3 = await readSessionView(publicClient, tableId)
+              if (sv3 && sv3.status !== 6) {
                 console.log('[AUTO] last-standing race — peer already settled')
                 addLog('Hand settled (by peer)')
                 return
@@ -1542,6 +1712,51 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   }, [address, allPlayers, communityCount, handleCommit, handleDeal, handleEvaluate, handleReveal,
       handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
       refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, tableBusy, actionPending, sittingDown, leaving, lookupSalt])
+
+  // Desync probe: every 3s probe on-chain (tableId, handId, status) directly.
+  // wagmi's refetchInterval stalls sometimes (RPC hiccup, React-Query cache).
+  // When peer advances the hand we MUST see it fast, otherwise we keep firing
+  // commitSaltFor on the stale hand and spamming "Hand started (by peer)".
+  // If on-chain handId > our local handId, we:
+  //   1. Set resyncingHand=true (blocks auto-loop commit/deal)
+  //   2. Force refetch wagmi hooks
+  //   3. Clear lastAutoKeyRef so a fresh tick runs on new state
+  useEffect(() => {
+    if (!isSeated && !sessionAccount) return
+    let cancelled = false
+    const probe = async () => {
+      try {
+        const svProbe = await readSessionView(publicClient, tableId)
+        if (cancelled) return
+        if (!svProbe) return
+        const chainHandId = svProbe.handId
+        const chainStatus = svProbe.status
+        lastProbeRef.current = Date.now()
+        setDbgOnChainHandId(chainHandId)
+        setDbgOnChainStatus(chainStatus)
+        // Desync detected: chain is ahead of wagmi cache.
+        if (chainHandId > handId || (chainHandId === handId && chainStatus !== status && (status === 0 || status === 7) && chainStatus >= 2 && chainStatus <= 5)) {
+          console.warn('[DESYNC] local=', handId, '/', status, 'chain=', chainHandId, '/', chainStatus, '— forcing resync')
+          setResyncingHand(true)
+          setLocalError(null)
+          setDbgLastError(null)
+          autoBusyRef.current = false
+          lastAutoKeyRef.current = null
+          dealFollowerWaitRef.current = 0
+          hardRefresh()
+        } else if (resyncingHand && chainHandId === handId) {
+          // Caught up.
+          console.log('[DESYNC] resolved — local now matches chain')
+          setResyncingHand(false)
+        }
+      } catch (e) {
+        // Silent — transient RPC issues are fine, wagmi still polls.
+      }
+    }
+    probe()
+    const id = setInterval(probe, 3000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [isSeated, sessionAccount, tableId, handId, status, resyncingHand, publicClient, hardRefresh])
 
   // Watchdog: every 2s check if we've been stuck. Three stall modes:
   //   (1) autoBusyRef=true for >8s in same state — an action never completed
@@ -1692,6 +1907,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       {status === 6 && showdownStuck && (
         <div style={{ ...st.banner, color: '#7ECFB3' }}>
           {'\u23F3'} {'Settling hand\u2026 recovering showdown automatically.'}
+        </div>
+      )}
+
+      {resyncingHand && (
+        <div style={{ ...st.banner, color: '#E8DCC8' }}>
+          {'\u23F3'} {'Syncing with table\u2026 (peer started new hand)'}
         </div>
       )}
 
@@ -1950,6 +2171,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         <div>handId={handId} В· cC={communityCount} В· active={allPlayers.filter(p => p.isActive).length}</div>
         <div>isSeated={isSeated ? 'y' : 'n'} В· hasSess={sessionAccount ? 'y' : 'n'} В· txBusy={txBusy ? 'y' : 'n'}</div>
         <div>autoBusy={autoBusyRef.current ? 'y' : 'n'} В· dealAttempts={dbgDealAttempts}</div>
+        <div style={{ color: resyncingHand ? '#E07070' : (dbgOnChainHandId > handId ? '#E8DCC8' : '#8A8A8A') }}>
+          view: sessions()→SessionView В· chain.hid={dbgOnChainHandId} В· chain.st={dbgOnChainStatus} В· active={activePlayerIdx} {resyncingHand ? 'В· RESYNC' : (dbgOnChainHandId > handId ? 'В· AHEAD' : '')}
+        </div>
         <div>last={dbgLastAction}</div>
         {(dbgLastError || localError) && <div style={{ color: '#E07070', wordBreak: 'break-word' }}>err: {dbgLastError ?? localError}</div>}
       </div>
