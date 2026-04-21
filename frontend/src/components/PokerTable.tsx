@@ -522,15 +522,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   const { data: fullSession, refetch: refetchSession } = useReadContract({
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'sessions', args: [tableId],
-    query: { refetchInterval: 4000 },
+    query: { refetchInterval: 6000 },
   })
   const { data: players, refetch: refetchPlayers } = useReadContract({
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayers', args: [tableId],
-    query: { refetchInterval: 4000 },
+    query: { refetchInterval: 6000 },
   })
   const { data: communityData } = useReadContract({
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getCommunityCards', args: [tableId],
-    query: { refetchInterval: 4000 },
+    query: { refetchInterval: 6000 },
   })
 
   const fs = fullSession as readonly any[] | undefined
@@ -561,11 +561,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   }))
   const { data: playerStatesData, refetch: refetchStates } = useReadContracts({
     contracts: playerStateContracts as any,
-    query: { refetchInterval: 4000, enabled: playerAddrs.length > 0 },
+    query: { refetchInterval: 6000, enabled: playerAddrs.length > 0 },
   })
   const { data: revealedCardsData, refetch: refetchRevealed } = useReadContracts({
     contracts: revealedContracts as any,
-    query: { refetchInterval: 4000, enabled: playerAddrs.length > 0 },
+    query: { refetchInterval: 6000, enabled: playerAddrs.length > 0 },
   })
 
   const allPlayersRaw: PState[] = playerAddrs.map((addr, i) => {
@@ -775,6 +775,30 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const autoBusyRef = useRef(false)
   const lastAutoKeyRef = useRef<string | null>(null)
   const dealFollowerWaitRef = useRef<number>(0)
+  // Circuit breaker: cap deal retry attempts per handId. Without this,
+  // if the chain rejects requestDealFor on EVERY attempt (e.g. genuine
+  // revert we don't know about), the auto-loop plus wagmi refetch +
+  // watchdog + desync probe together fire requestDealFor thousands of
+  // times → browser starts dropping with ERR_INSUFFICIENT_RESOURCES.
+  const dealAttemptsPerHandRef = useRef<{ handId: number; count: number; lastAt: number }>({ handId: -1, count: 0, lastAt: 0 })
+  const MAX_DEAL_ATTEMPTS_PER_HAND = 10
+  const MIN_DEAL_RETRY_INTERVAL_MS = 8000
+  // Same cap for commit — without this, if the commit RPC revert is sticky
+  // (e.g. chain ahead, hand already advanced), auto-loop spams commitSaltFor
+  // just like it did for deal and burns the browser's socket pool.
+  const commitAttemptsPerHandRef = useRef<{ handId: number; count: number; lastAt: number }>({ handId: -1, count: 0, lastAt: 0 })
+  const MAX_COMMIT_ATTEMPTS_PER_HAND = 8
+  const MIN_COMMIT_RETRY_INTERVAL_MS = 5000
+  // Global rate limiter across ALL auto-loop tx attempts. Guards against
+  // the scenario where multiple code paths (commit, deal, reveal, settle,
+  // force-timeout) all fire within a single refetch cycle and collectively
+  // drive 10+ rps. Cap: at most 1 auto-tx per 2s globally.
+  const lastAutoTxAtRef = useRef<number>(0)
+  const MIN_GLOBAL_AUTO_TX_INTERVAL_MS = 2000
+  // Rate-limit and circuit-breaker refs for auto-loop.
+  const lastAutoFireRef = useRef<number>(0)
+  const autoFailCountRef = useRef<number>(0)
+  const autoFailHandIdRef = useRef<number>(0)
   // Diagnostic counters visible in debug overlay (help pinpoint stuck states)
   const [dbgLastAction, setDbgLastAction] = useState<string>('—')
   const [dbgDealAttempts, setDbgDealAttempts] = useState(0)
@@ -795,6 +819,9 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     autoBusyRef.current = false
     lastAutoKeyRef.current = null
     dealFollowerWaitRef.current = 0
+    dealAttemptsPerHandRef.current = { handId: -1, count: 0, lastAt: 0 }
+    commitAttemptsPerHandRef.current = { handId: -1, count: 0, lastAt: 0 }
+    lastAutoTxAtRef.current = 0
     if (watchdogTimerRef.current) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null }
   }, [sessionAddr, address, tableId])
 
@@ -1582,15 +1609,55 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
     const hasAnyUsableSalt = lookupSalt() !== null
 
-    const runAuto = (fn: () => Promise<unknown>, retryDelay = 4000) => {
+    // Hard rate-limit: never let auto-loop fire more than once per 6 seconds.
+    // Previous version could spam 500+ tx per minute because every wagmi
+    // refetch (every 4s) re-ran the effect, and failed runAuto cleared the
+    // lock after 4-5s. That produced ERR_INSUFFICIENT_RESOURCES in the
+    // browser (2000+ dealAttempts observed). This cap protects the RPC,
+    // the browser, and the user's Keplr session.
+    const now = Date.now()
+    if (now - lastAutoFireRef.current < 6000) {
+      console.log('[AUTO-RATE] last fire was', now - lastAutoFireRef.current, 'ms ago, skipping')
+      return
+    }
+    // Circuit breaker: if we tried the same hand's deal/commit 4+ times and
+    // every attempt reverted, something is wrong on-chain (peer race,
+    // stale state, chain stall). STOP auto-loop for this hand entirely —
+    // user will see the debug info and either wait for chain to move or
+    // use forceShowdownTimeout.
+    if (autoFailCountRef.current >= 4 && autoFailHandIdRef.current === handId) {
+      console.warn('[AUTO-BAIL] too many failures on hand', handId, '— halting auto-loop until handId changes')
+      setDbgLastAction(`bail:hand${handId}-fails${autoFailCountRef.current}`)
+      return
+    }
+    // Reset circuit breaker on handId change.
+    if (autoFailHandIdRef.current !== handId) {
+      autoFailCountRef.current = 0
+      autoFailHandIdRef.current = handId
+    }
+
+    const runAuto = (fn: () => Promise<unknown>, retryDelay = 6000) => {
+      // Global rate limiter: no more than 1 auto-tx per MIN_GLOBAL_AUTO_TX_INTERVAL_MS.
+      const now = Date.now()
+      const sinceLast = now - lastAutoTxAtRef.current
+      if (sinceLast < MIN_GLOBAL_AUTO_TX_INTERVAL_MS) {
+        console.log('[AUTO-RATE-LIMIT] skipping, only', sinceLast, 'ms since last auto tx')
+        setDbgLastAction(`rate-limit:${sinceLast}ms`)
+        return
+      }
+      lastAutoTxAtRef.current = now
       lastAutoKeyRef.current = stateKey
       autoBusyRef.current = true
+      lastAutoFireRef.current = now
       fn()
         .then(() => {
+          // Success — reset fail counter.
+          autoFailCountRef.current = 0
           setTimeout(() => { autoBusyRef.current = false; refreshAll() }, 2500)
         })
         .catch((err) => {
           console.warn('[AUTO] action failed, retrying:', err)
+          autoFailCountRef.current += 1
           setTimeout(() => {
             autoBusyRef.current = false
             lastAutoKeyRef.current = null
@@ -1602,10 +1669,31 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     // Commit: only if I have chips AND >=2 chipped players; salt goes under expectedHandId (handId+1).
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted < playerCount) {
       if (!enoughChippedPlayers || !iHaveChips) return
-      // Even if a local salt exists, on-chain state might disagree (stale salt
-      // from an earlier contract deploy, a dropped tx, or a pre-leave session).
-      // We try to commit anyway — contract will revert with SaltAlreadyCommitted
-      // if it turns out we really did commit already, and the loop will move on.
+      // Commit circuit breaker: cap retries per expected handId.
+      const cbr = commitAttemptsPerHandRef.current
+      const expHid = handId + 1 // commit goes under next handId
+      if (cbr.handId !== expHid) {
+        commitAttemptsPerHandRef.current = { handId: expHid, count: 0, lastAt: 0 }
+      }
+      if (commitAttemptsPerHandRef.current.count >= MAX_COMMIT_ATTEMPTS_PER_HAND) {
+        console.warn('[AUTO-COMMIT-BREAKER] max attempts reached for expHid=', expHid)
+        setDbgLastError(`Commit stuck after ${MAX_COMMIT_ATTEMPTS_PER_HAND} attempts — manual intervention needed`)
+        return
+      }
+      if (Date.now() - commitAttemptsPerHandRef.current.lastAt < MIN_COMMIT_RETRY_INTERVAL_MS) {
+        console.log('[AUTO-COMMIT-COOLDOWN] too soon since last attempt')
+        return
+      }
+      // Global rate limit check — not all code paths go through runAuto.
+      const nowT = Date.now()
+      if (nowT - lastAutoTxAtRef.current < MIN_GLOBAL_AUTO_TX_INTERVAL_MS) {
+        console.log('[AUTO-COMMIT-RATE-LIMIT] global rate limit hit')
+        return
+      }
+      lastAutoTxAtRef.current = nowT
+      commitAttemptsPerHandRef.current.count += 1
+      commitAttemptsPerHandRef.current.lastAt = nowT
+      console.log('[AUTO-COMMIT] firing commitSaltFor, attempt', commitAttemptsPerHandRef.current.count, 'expHid', expHid)
       const existingSalt = getStoredValue(saltKey)
       if (!existingSalt) {
         // No local salt — plain commit path.
@@ -1639,6 +1727,22 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     // one reverts "Wrong phase", and both loop 1000+ times).
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount) {
       if (!enoughChippedPlayers) { console.log('[AUTO-DEAL-SKIP] not enough chipped players'); return }
+      // Circuit breaker #1: if we've exhausted retry quota for this handId,
+      // stop. The user can manually trigger via a button (UI) if they want.
+      const br = dealAttemptsPerHandRef.current
+      if (br.handId !== handId) {
+        dealAttemptsPerHandRef.current = { handId, count: 0, lastAt: 0 }
+      }
+      if (dealAttemptsPerHandRef.current.count >= MAX_DEAL_ATTEMPTS_PER_HAND) {
+        console.warn('[AUTO-DEAL-BREAKER] max attempts reached for handId=', handId, 'count=', dealAttemptsPerHandRef.current.count)
+        setDbgLastError(`Deal stuck after ${MAX_DEAL_ATTEMPTS_PER_HAND} attempts — manual retry needed`)
+        return
+      }
+      // Circuit breaker #2: enforce minimum interval between attempts.
+      if (Date.now() - dealAttemptsPerHandRef.current.lastAt < MIN_DEAL_RETRY_INTERVAL_MS) {
+        console.log('[AUTO-DEAL-COOLDOWN] too soon since last attempt')
+        return
+      }
       const lowestSeat = Math.min(...allPlayers.filter(p => p.chips > 0n).map(p => p.seatIndex))
       const iAmDealLeader = myPlayer?.seatIndex === lowestSeat
       if (!iAmDealLeader) {
@@ -1649,8 +1753,10 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         }
       }
       dealFollowerWaitRef.current = 0
-      console.log('[AUTO-DEAL] firing requestDealFor', iAmDealLeader ? '(leader)' : '(follower fallback)')
-      runAuto(handleDeal, 5000)
+      dealAttemptsPerHandRef.current.count += 1
+      dealAttemptsPerHandRef.current.lastAt = Date.now()
+      console.log('[AUTO-DEAL] firing requestDealFor', iAmDealLeader ? '(leader)' : '(follower fallback)', 'attempt', dealAttemptsPerHandRef.current.count)
+      runAuto(handleDeal, 8000)
       return
     }
     // SHOWDOWN PHASE (status===6)
@@ -1754,7 +1860,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       }
     }
     probe()
-    const id = setInterval(probe, 3000)
+    const id = setInterval(probe, 5000)
     return () => { cancelled = true; clearInterval(id) }
   }, [isSeated, sessionAccount, tableId, handId, status, resyncingHand, publicClient, hardRefresh])
 
@@ -1911,8 +2017,25 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       )}
 
       {resyncingHand && (
-        <div style={{ ...st.banner, color: '#E8DCC8' }}>
-          {'\u23F3'} {'Syncing with table\u2026 (peer started new hand)'}
+        <div style={{ ...st.banner, color: '#E8DCC8', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span>{'\u23F3'} {'Syncing with table\u2026 (peer started new hand)'}</span>
+          <button
+            onClick={() => {
+              console.log('[MANUAL-RESYNC] user clicked resync')
+              autoFailCountRef.current = 0
+              lastAutoKeyRef.current = null
+              autoBusyRef.current = false
+              dealFollowerWaitRef.current = 0
+              lastAutoFireRef.current = 0
+              setDbgLastError(null)
+              setLocalError(null)
+              setResyncingHand(false)
+              hardRefresh()
+            }}
+            style={{ background: '#E8DCC8', color: '#000', border: 'none', padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}
+          >
+            Force resync
+          </button>
         </div>
       )}
 
