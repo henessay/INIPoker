@@ -356,15 +356,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   const { data: fullSession, refetch: refetchSession } = useReadContract({
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'sessions', args: [tableId],
-    query: { refetchInterval: 2000 },
+    query: { refetchInterval: 4000 },
   })
   const { data: players, refetch: refetchPlayers } = useReadContract({
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayers', args: [tableId],
-    query: { refetchInterval: 2000 },
+    query: { refetchInterval: 4000 },
   })
   const { data: communityData } = useReadContract({
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getCommunityCards', args: [tableId],
-    query: { refetchInterval: 2000 },
+    query: { refetchInterval: 4000 },
   })
 
   const fs = fullSession as readonly any[] | undefined
@@ -392,11 +392,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   }))
   const { data: playerStatesData, refetch: refetchStates } = useReadContracts({
     contracts: playerStateContracts as any,
-    query: { refetchInterval: 2000, enabled: playerAddrs.length > 0 },
+    query: { refetchInterval: 4000, enabled: playerAddrs.length > 0 },
   })
   const { data: revealedCardsData, refetch: refetchRevealed } = useReadContracts({
     contracts: revealedContracts as any,
-    query: { refetchInterval: 2000, enabled: playerAddrs.length > 0 },
+    query: { refetchInterval: 4000, enabled: playerAddrs.length > 0 },
   })
 
   const allPlayersRaw: PState[] = playerAddrs.map((addr, i) => {
@@ -589,6 +589,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   // Auto-loop state must be defined before handlers so they can reset it.
   const autoBusyRef = useRef(false)
   const lastAutoKeyRef = useRef<string | null>(null)
+  const dealFollowerWaitRef = useRef<number>(0)
   // Diagnostic counters visible in debug overlay (help pinpoint stuck states)
   const [dbgLastAction, setDbgLastAction] = useState<string>('—')
   const [dbgDealAttempts, setDbgDealAttempts] = useState(0)
@@ -602,6 +603,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   useEffect(() => {
     autoBusyRef.current = false
     lastAutoKeyRef.current = null
+    dealFollowerWaitRef.current = 0
     if (watchdogTimerRef.current) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null }
   }, [sessionAddr, address, tableId])
 
@@ -629,7 +631,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     if (localStatus && /Revealing|Evaluating|Settling|Waiting for showdown/i.test(localStatus)) {
       setLocalStatus(null)
     }
-    const stalePattern = /revealHoleCardsFor|evaluateShowdown|Missing or invalid parameters|would revert|No local salt|Salt not found|Local salt|Salt for hand/i
+    const stalePattern = /revealHoleCardsFor|evaluateShowdown|No local salt|Salt not found|Local salt|Salt for hand|reveal may fail/i
     if (localError && stalePattern.test(localError)) {
       setLocalError(null)
     }
@@ -644,7 +646,7 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   useEffect(() => {
     if (handId !== prevHandIdRef.current) {
       prevHandIdRef.current = handId
-      const stalePattern = /revealHoleCardsFor|evaluateShowdown|Missing or invalid parameters|would revert|No local salt|Salt not found|Local salt|Salt for hand/i
+      const stalePattern = /revealHoleCardsFor|evaluateShowdown|No local salt|Salt not found|Local salt|Salt for hand|reveal may fail/i
       if (localError && stalePattern.test(localError)) setLocalError(null)
       if (dbgLastError && stalePattern.test(dbgLastError)) setDbgLastError(null)
       if (localStatus && /Revealing|Evaluating|Settling|Waiting for showdown/i.test(localStatus)) {
@@ -656,16 +658,58 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const doAction = useCallback(async (fnName: string, args: unknown[], label: string) => {
     setActionPending(true)
     setLocalError(null)
+    // Preflight: read fresh on-chain state and validate the action legality
+    // locally. This lets us show the EXACT reason in dbg instead of the
+    // generic "Missing or invalid parameters" that viem reports when the
+    // ABI has no custom-error definitions for the real revert cause.
+    if (fnName === 'playerActionFor' && address) {
+      try {
+        const [sess, players, ps] = await Promise.all([
+          publicClient.readContract({ address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'sessions', args: [tableId] }) as Promise<readonly any[]>,
+          publicClient.readContract({ address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayers', args: [tableId] }) as Promise<readonly `0x${string}`[]>,
+          publicClient.readContract({ address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayerState', args: [tableId, address] }) as Promise<readonly any[]>,
+        ])
+        const onChainStatus = Number(sess[5])
+        const onChainActiveIdx = Number(sess[7])
+        const onChainCurrentBet = BigInt(sess[10] ?? 0n)
+        const onChainActivePlayer = players[onChainActiveIdx]?.toLowerCase()
+        const myChips = BigInt(ps[0] ?? 0n)
+        const myCurrentBet = BigInt(ps[1] ?? 0n)
+        const myIsActive = Boolean(ps[3])
+        const actionCode = Number(args[2])
+        const actionAmount = BigInt(args[3] as any)
+        let reason: string | null = null
+        if (onChainStatus < 2 || onChainStatus > 5) reason = `Wrong phase (status=${onChainStatus})`
+        else if (!myIsActive) reason = 'You are not active in this hand'
+        else if (!onChainActivePlayer || onChainActivePlayer !== address.toLowerCase()) reason = `Not your turn (active=${onChainActivePlayer?.slice(0,10)}…)`
+        else if (myChips === 0n) reason = 'You have no chips'
+        else if (actionCode === 2 /* Check */ && onChainCurrentBet > myCurrentBet) reason = `Must call ${Number(onChainCurrentBet - myCurrentBet) / 1e18} INIT, cannot check`
+        else if (actionCode === 4 /* Call */ && onChainCurrentBet <= myCurrentBet) reason = 'Nothing to call; try Check'
+        else if (actionCode === 3 /* Bet */ && actionAmount === 0n) reason = 'Bet amount is zero'
+        else if (actionCode === 3 /* Bet */ && onChainCurrentBet > 0n) reason = 'Cannot bet — there is already a bet; use Raise'
+        else if (actionCode === 5 /* Raise */ && actionAmount <= onChainCurrentBet) reason = `Raise must be > ${Number(onChainCurrentBet) / 1e18} INIT (current bet)`
+        if (reason) {
+          console.warn('[PREFLIGHT]', fnName, '->', reason)
+          setDbgLastError(reason)
+          setActionPending(false)
+          return
+        }
+      } catch (probeErr) {
+        console.warn('[PREFLIGHT] probe failed, continuing to tx:', probeErr)
+      }
+    }
     try {
       await sWrite(fnName, args)
       addLog(label)
     } catch (err: any) {
-      setLocalError((err.shortMessage ?? err.message ?? String(err)).slice(0, 180))
+      const msg = (err.shortMessage ?? err.message ?? String(err)).slice(0, 220)
+      setLocalError(msg)
+      setDbgLastError(msg)
     }
     setActionPending(false)
     setTimeout(refreshAll, 800)
     setTimeout(refreshAll, 2200)
-  }, [addLog, refreshAll, sWrite])
+  }, [addLog, refreshAll, sWrite, address, tableId, publicClient])
 
   const handleFold  = () => address && doAction('playerActionFor', [tableId, address, 1, 0n], 'You folded')
   const handleCheck = () => address && doAction('playerActionFor', [tableId, address, 2, 0n], 'You checked')
@@ -1416,11 +1460,24 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       }, delay)
       return
     }
-    // Deal: all salts in, fire requestDealFor
+    // Deal: all salts in, fire requestDealFor.
+    // Leader election: lowest seatIndex among chipped players deals first.
+    // Others wait 6s before trying (prevents race where both deal simultaneously,
+    // one reverts "Wrong phase", and both loop 1000+ times).
     if ((status === 0 || status === 7) && playerCount >= 2 && saltsCommitted >= playerCount) {
       if (!enoughChippedPlayers) { console.log('[AUTO-DEAL-SKIP] not enough chipped players'); return }
-      console.log('[AUTO-DEAL] firing requestDealFor')
-      runAuto(handleDeal)
+      const lowestSeat = Math.min(...allPlayers.filter(p => p.chips > 0n).map(p => p.seatIndex))
+      const iAmDealLeader = myPlayer?.seatIndex === lowestSeat
+      if (!iAmDealLeader) {
+        if (!dealFollowerWaitRef.current) dealFollowerWaitRef.current = Date.now()
+        if (Date.now() - dealFollowerWaitRef.current < 6000) {
+          console.log('[AUTO-DEAL] waiting for deal leader (seat', lowestSeat, ')')
+          return
+        }
+      }
+      dealFollowerWaitRef.current = 0
+      console.log('[AUTO-DEAL] firing requestDealFor', iAmDealLeader ? '(leader)' : '(follower fallback)')
+      runAuto(handleDeal, 5000)
       return
     }
     // SHOWDOWN PHASE (status===6)

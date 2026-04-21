@@ -101,4 +101,28 @@ export const POKER_GAME_ABI = [
   { type: 'function', name: 'revealHoleCardsFor', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }, { name: 'player', type: 'address' }, { name: 'salt', type: 'bytes32' }], outputs: [] },
   { type: 'function', name: 'evaluateShowdown', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'settleLastStanding', stateMutability: 'nonpayable', inputs: [{ name: 'tableId', type: 'uint256' }], outputs: [] },
+
+  // Custom errors — required for viem to decode revert reasons instead of
+  // showing generic "Missing or invalid parameters".
+  { type: 'error', name: 'Unauthorized', inputs: [] },
+  { type: 'error', name: 'OnlyVRFProvider', inputs: [{ name: 'expected', type: 'address' }, { name: 'actual', type: 'address' }] },
+  { type: 'error', name: 'TableNotFound', inputs: [{ name: 'tableId', type: 'uint256' }] },
+  { type: 'error', name: 'TableFull', inputs: [] },
+  { type: 'error', name: 'NotSeated', inputs: [{ name: 'player', type: 'address' }] },
+  { type: 'error', name: 'AlreadySeated', inputs: [{ name: 'player', type: 'address' }] },
+  { type: 'error', name: 'InvalidBuyIn', inputs: [{ name: 'sent', type: 'uint256' }, { name: 'min', type: 'uint256' }, { name: 'max', type: 'uint256' }] },
+  { type: 'error', name: 'NotYourTurn', inputs: [{ name: 'expected', type: 'address' }, { name: 'actual', type: 'address' }] },
+  { type: 'error', name: 'NotEnoughPlayers', inputs: [] },
+  { type: 'error', name: 'InvalidAction', inputs: [] },
+  { type: 'error', name: 'HandAlreadyInProgress', inputs: [] },
+  { type: 'error', name: 'VRFRequestPending', inputs: [{ name: 'tableId', type: 'uint256' }] },
+  { type: 'error', name: 'NoVRFRequestPending', inputs: [{ name: 'tableId', type: 'uint256' }] },
+  { type: 'error', name: 'TimeoutNotReached', inputs: [{ name: 'current', type: 'uint256' }, { name: 'deadline', type: 'uint256' }] },
+  { type: 'error', name: 'SaltAlreadyCommitted', inputs: [{ name: 'player', type: 'address' }] },
+  { type: 'error', name: 'NotAllSaltsCommitted', inputs: [{ name: 'committed', type: 'uint8' }, { name: 'required', type: 'uint8' }] },
+  { type: 'error', name: 'AlreadyRevealed', inputs: [{ name: 'player', type: 'address' }] },
+  { type: 'error', name: 'SaltMismatch', inputs: [{ name: 'player', type: 'address' }] },
+  { type: 'error', name: 'CommitmentMismatch', inputs: [{ name: 'player', type: 'address' }, { name: 'expected', type: 'bytes32' }, { name: 'computed', type: 'bytes32' }] },
+  { type: 'error', name: 'NotAllPlayersRevealed', inputs: [] },
+  { type: 'error', name: 'PlayerNotActive', inputs: [{ name: 'player', type: 'address' }] },
 ] as const
