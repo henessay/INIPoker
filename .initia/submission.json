@@ -1,0 +1,39 @@
+{
+  "name": "INIPoker",
+  "description": "Fully on-chain Texas Hold'em poker on Initia L2 with session wallets, commit-reveal card secrecy via Band VRF, and WebSocket real-time sync",
+  "category": "Gaming",
+  "track": "Gaming & Consumer",
+  "team": {
+    "members": [
+      {
+        "name": "Mykola",
+        "role": "Solo developer",
+        "github": "https://github.com/henessay"
+      }
+    ]
+  },
+  "chainId": "2649570508581093",
+  "contracts": {
+    "PokerGame": "0xC2D1b8cea516eEcB711fd1F01B6DaCC6195a8408",
+    "BandVRFProvider": "0xD3c013B0615Cf3558d16Ab09e612c317EE8058A8"
+  },
+  "links": {
+    "demo": "https://ini-poker.vercel.app",
+    "github": "https://github.com/henessay/INIPoker",
+    "video": "https://www.youtube.com/watch?v=puW8NU5jPbg",
+    "rpc": "https://inipoker.duckdns.org/rpc"
+  },
+  "techStack": [
+    "Solidity",
+    "MiniEVM",
+    "viem",
+    "wagmi",
+    "React",
+    "Node.js",
+    "WebSocket",
+    "Band VRF",
+    "Foundry",
+    "Caddy",
+    "Vercel"
+  ]
+}
