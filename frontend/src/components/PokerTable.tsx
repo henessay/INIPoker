@@ -8,6 +8,7 @@ import { useAccount, useReadContract, useReadContracts, useSendTransaction, useW
 import { useQueryClient } from '@tanstack/react-query'
 import { POKER_GAME_ADDRESS, POKER_GAME_ABI } from '../config/contract'
 import { useWalletBalance } from '../hooks/useWalletBalance'
+import { useGameState } from '../hooks/useGameState'
 import CashierModal from './CashierModal'
 
 const RPC_URL_READ  = 'https://ini-poker.vercel.app/api/rpc'
@@ -520,23 +521,18 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
     return hash
   }, [publicClient, sessionAccount])
 
-  const { data: fullSession, refetch: refetchSession } = useReadContract({
-    address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'sessions', args: [tableId],
-    query: { refetchInterval: 6000 },
-  })
-  const { data: players, refetch: refetchPlayers } = useReadContract({
-    address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayers', args: [tableId],
-    query: { refetchInterval: 6000 },
-  })
-  const { data: communityData } = useReadContract({
-    address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getCommunityCards', args: [tableId],
-    query: { refetchInterval: 6000 },
-  })
-
-  const fs = fullSession as readonly any[] | undefined
-  // Decode once into a named-field view. Every top-level read below now
-  // uses `sv.handId` / `sv.status` rather than magic indices.
-  const sv = decodeSession(fs)
+  // ─── Game state via WebSocket sync-server ───────────────────────────
+  // Replaces wagmi useReadContract polling for session/players/community.
+  // The sync-server polls geth once per second and broadcasts to every
+  // connected client, so both clients see identical state at the same time
+  // — no more client-client handId desync from staggered refetches.
+  //
+  // wagmi is still used for:
+  //   - tx writes (useWriteContract, useSendTransaction)
+  //   - balance queries (useWalletBalance — wallet, not game table)
+  //   - one-off reads in preflight/probe paths via publicClient
+  const { state: wsGameState, connected: wsConnected, lastUpdateAt: wsLastUpdateAt } = useGameState(tableId)
+  const sv = wsGameState?.session ?? null
   const handId = sv?.handId ?? 0
   const status = sv?.status ?? 0
   const dealerIndex = sv?.dealerIndex ?? 0
@@ -550,37 +546,35 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const deckSeed = sv?.deckSeed ?? EMPTY_HASH
   const communityCount = sv?.communityCount ?? 0
   const saltsCommitted = sv?.saltsCommitted ?? 0
-  const community = (communityData ? Array.from(communityData as any) : [0, 0, 0, 0, 0]) as number[]
+  const community = wsGameState?.community ?? [0, 0, 0, 0, 0]
 
-  const playerAddrs = ((players as readonly `0x${string}`[] | undefined) ?? []).filter(addr => addr.toLowerCase() !== ZERO_ADDR)
-  const playerStateContracts = playerAddrs.map(addr => ({
-    address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getPlayerState', args: [tableId, addr],
-  }))
+  // Revealed hole cards are not part of the WS state (rare event, easy to
+  // fetch on demand). When at least one player has revealed (saltsRevealed > 0),
+  // we one-shot fetch via wagmi useReadContracts — no polling, fires once per
+  // saltsRevealed increment.
+  const playerAddrs = (wsGameState?.players ?? []).map(p => p.addr).filter(a => a.toLowerCase() !== ZERO_ADDR)
   const revealedContracts = playerAddrs.map(addr => ({
     address: POKER_GAME_ADDRESS, abi: POKER_GAME_ABI, functionName: 'getRevealedCards', args: [tableId, addr],
   }))
-  const { data: playerStatesData, refetch: refetchStates } = useReadContracts({
-    contracts: playerStateContracts as any,
-    query: { refetchInterval: 6000, enabled: playerAddrs.length > 0 },
-  })
   const { data: revealedCardsData, refetch: refetchRevealed } = useReadContracts({
     contracts: revealedContracts as any,
-    query: { refetchInterval: 6000, enabled: playerAddrs.length > 0 },
+    // Only enabled during showdown/settled with at least one reveal in flight.
+    // No refetchInterval — trigger refetch manually when saltsRevealed changes.
+    query: { enabled: playerAddrs.length > 0 && (status === 6 || (status === 7 && (sv?.saltsRevealed ?? 0) > 0)) },
   })
 
-  const allPlayersRaw: PState[] = playerAddrs.map((addr, i) => {
-    const state = playerStatesData?.[i]?.result as any
+  const allPlayersRaw: PState[] = (wsGameState?.players ?? []).map((p, i) => {
     const revealed = revealedCardsData?.[i]?.result as any
     return {
-      addr,
-      stake: state ? (state[0] as bigint) : 0n,
-      chips: state ? (state[0] as bigint) : 0n,
-      currentBet: state ? (state[1] as bigint) : 0n,
-      lastAction: state ? Number(state[2]) : 0,
-      isActive: state ? Boolean(state[3]) : false,
-      seatIndex: state ? Number(state[4]) : i,
-      hasRevealed: state ? Boolean(state[6]) : false,
-      handRank: state ? Number(state[7]) : 0,
+      addr: p.addr,
+      stake: p.chips,
+      chips: p.chips,
+      currentBet: p.currentBet,
+      lastAction: p.lastAction,
+      isActive: p.isActive,
+      seatIndex: p.seatIndex,
+      hasRevealed: p.hasRevealed,
+      handRank: p.handRank,
       revealedCard0: revealed ? encodeCardFromDecoded(Number(revealed[0]), Number(revealed[1])) : 0,
       revealedCard1: revealed ? encodeCardFromDecoded(Number(revealed[2]), Number(revealed[3])) : 0,
     }
@@ -588,29 +582,23 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   const allPlayers = allPlayersRaw.slice().sort((a, b) => a.seatIndex - b.seatIndex)
   const playerCount = rawPlayerCount
 
+  // refreshAll now only refreshes things NOT covered by WebSocket — balance
+  // and revealed-cards. Session/players/community flow automatically.
   const refreshAll = useCallback(() => {
-    refetchSession()
-    refetchPlayers()
-    refetchStates()
     refetchRevealed()
     refetchBal()
-  }, [refetchSession, refetchPlayers, refetchStates, refetchRevealed, refetchBal])
+  }, [refetchRevealed, refetchBal])
 
-  // hardRefresh: drops React-Query cache for all readContract queries on
-  // this table, forcing a fresh RPC hit on the next render. Use after
-  // critical transitions (peer started hand, fold settled, deal confirmed)
-  // where normal refetchInterval is too slow and stale cache would cause
-  // the two clients to disagree on handId / status.
+  // Kept for API compat — internal paths that historically called hardRefresh
+  // after a peer-race detection. With WebSocket, the broadcast arrives within
+  // ~1s of the chain tx, so no cache busting is needed. This is a soft alias.
   const qc = useQueryClient()
   const hardRefresh = useCallback(() => {
     qc.invalidateQueries({ queryKey: ['readContract'] })
     qc.invalidateQueries({ queryKey: ['readContracts'] })
-    refetchSession()
-    refetchPlayers()
-    refetchStates()
     refetchRevealed()
     refetchBal()
-  }, [qc, refetchSession, refetchPlayers, refetchStates, refetchRevealed, refetchBal])
+  }, [qc, refetchRevealed, refetchBal])
 
   const myPlayer = allPlayers.find(p => p.addr.toLowerCase() === address?.toLowerCase())
   const isSeated = !!myPlayer
@@ -2294,8 +2282,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
         <div>handId={handId} В· cC={communityCount} В· active={allPlayers.filter(p => p.isActive).length}</div>
         <div>isSeated={isSeated ? 'y' : 'n'} В· hasSess={sessionAccount ? 'y' : 'n'} В· txBusy={txBusy ? 'y' : 'n'}</div>
         <div>autoBusy={autoBusyRef.current ? 'y' : 'n'} В· dealAttempts={dbgDealAttempts}</div>
+        <div style={{ color: wsConnected ? '#7ECFB3' : '#E07070' }}>
+          ws: {wsConnected ? 'connected' : 'disconnected'} В· lastUpdate={wsLastUpdateAt ? Math.round((Date.now() - wsLastUpdateAt) / 1000) + 's ago' : 'never'}
+        </div>
         <div style={{ color: resyncingHand ? '#E07070' : (dbgOnChainHandId > handId ? '#E8DCC8' : '#8A8A8A') }}>
-          view: sessions()→SessionView В· chain.hid={dbgOnChainHandId} В· chain.st={dbgOnChainStatus} В· active={activePlayerIdx} {resyncingHand ? 'В· RESYNC' : (dbgOnChainHandId > handId ? 'В· AHEAD' : '')}
+          view: sync-server В· chain.hid={dbgOnChainHandId} В· chain.st={dbgOnChainStatus} В· active={activePlayerIdx} {resyncingHand ? 'В· RESYNC' : (dbgOnChainHandId > handId ? 'В· AHEAD' : '')}
         </div>
         <div>last={dbgLastAction}</div>
         {(dbgLastError || localError) && <div style={{ color: '#E07070', wordBreak: 'break-word' }}>err: {dbgLastError ?? localError}</div>}
