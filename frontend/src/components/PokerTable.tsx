@@ -183,12 +183,12 @@ const STATUS_LABELS = ['Waiting', 'Dealing', 'Pre-Flop', 'Flop', 'Turn', 'River'
 const HAND_RANKS = ['', 'High Card', 'One Pair', 'Two Pair', 'Three of a Kind', 'Straight', 'Flush', 'Full House', 'Four of a Kind', 'Straight Flush', 'Royal Flush']
 
 const SEAT_POSITIONS = [
-  { top: '5%', left: '50%' },
-  { top: '25%', left: '95%' },
-  { top: '65%', left: '95%' },
-  { top: '85%', left: '50%' },
-  { top: '65%', left: '5%' },
-  { top: '25%', left: '5%' },
+  { top: '-5%', left: '50%' },
+  { top: '15%', left: '100%' },
+  { top: '75%', left: '100%' },
+  { top: '95%', left: '50%' },
+  { top: '75%', left: '0%' },
+  { top: '15%', left: '0%' },
 ]
 
 function getRotatedPos(seatIdx: number, mySeat: number): { top: string, left: string } {
@@ -2305,14 +2305,14 @@ const st = {
   errBanner: { padding: '8px 24px', background: 'rgba(224,112,112,0.08)', borderBottom: '1px solid rgba(224,112,112,0.15)', color: '#E07070', fontSize: '11px', flexShrink: 0 },
   body: { flex: 1, display: 'flex', minHeight: 0 },
   mainCol: { flex: 1, display: 'flex', flexDirection: 'column' as const, minWidth: 0 },
-  tableArea: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', position: 'relative' as const, overflow: 'hidden' },
+  tableArea: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', position: 'relative' as const, overflow: 'visible' },
   tableFelt: { position: 'relative' as const, width: '100%', maxWidth: '960px', height: '580px', background: 'radial-gradient(ellipse at center, #0f2e1e 0%, #071712 55%, #030705 100%)', borderRadius: '50%/30%', border: '5px solid #2a4632', boxShadow: 'inset 0 0 80px rgba(0,0,0,0.75), 0 0 50px rgba(0,0,0,0.6)' },
   potArea: { position: 'absolute' as const, top: '48%', left: '50%', transform: 'translate(-50%,-50%)', textAlign: 'center' as const, zIndex: 2 },
   potLabel: { fontSize: '8px', color: '#555', letterSpacing: '3px', textTransform: 'uppercase' as const, fontWeight: 600 },
   potValue: { fontSize: '28px', fontWeight: 700, color: '#E8DCC8', fontFamily: '"DM Mono",monospace', marginTop: '2px', letterSpacing: '-0.5px' },
   potHint: { fontSize: '10px', color: '#555', marginTop: '8px', fontStyle: 'italic' as const },
   communityArea: { position: 'absolute' as const, top: '26%', left: '50%', transform: 'translate(-50%,-50%)', display: 'flex', gap: '6px', justifyContent: 'center', padding: '8px 0', zIndex: 3 },
-  holeArea: { position: 'absolute' as const, bottom: '2%', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '8px', zIndex: 4, padding: '6px 14px', background: 'rgba(0,0,0,0.8)', borderRadius: '10px', border: '2px solid rgba(232,220,200,0.3)', boxShadow: '0 6px 16px rgba(0,0,0,0.6)' },
+  holeArea: { position: 'absolute' as const, bottom: '20%', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '8px', zIndex: 4, padding: '6px 14px', background: 'rgba(0,0,0,0.8)', borderRadius: '10px', border: '2px solid rgba(232,220,200,0.3)', boxShadow: '0 6px 16px rgba(0,0,0,0.6)' },
   seatsContainer: { position: 'absolute' as const, top: 0, left: 0, right: 0, bottom: 0 },
   seatWrap: { position: 'absolute' as const, zIndex: 1 },
   seatBetChips: { position: 'absolute' as const, top: '50%', left: 'calc(100% + 10px)', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', animation: 'chipBet 0.4s cubic-bezier(.25,.9,.3,1.2) both', zIndex: 3 },
