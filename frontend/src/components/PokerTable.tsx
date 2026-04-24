@@ -183,12 +183,12 @@ const STATUS_LABELS = ['Waiting', 'Dealing', 'Pre-Flop', 'Flop', 'Turn', 'River'
 const HAND_RANKS = ['', 'High Card', 'One Pair', 'Two Pair', 'Three of a Kind', 'Straight', 'Flush', 'Full House', 'Four of a Kind', 'Straight Flush', 'Royal Flush']
 
 const SEAT_POSITIONS = [
-  { top: '8%', left: '50%' },
-  { top: '28%', left: '92%' },
-  { top: '62%', left: '92%' },
-  { top: '80%', left: '50%' },
-  { top: '62%', left: '8%' },
-  { top: '28%', left: '8%' },
+  { top: '5%', left: '50%' },
+  { top: '25%', left: '95%' },
+  { top: '65%', left: '95%' },
+  { top: '85%', left: '50%' },
+  { top: '65%', left: '5%' },
+  { top: '25%', left: '5%' },
 ]
 
 function getRotatedPos(seatIdx: number, mySeat: number): { top: string, left: string } {
@@ -2312,10 +2312,10 @@ const st = {
   potValue: { fontSize: '28px', fontWeight: 700, color: '#E8DCC8', fontFamily: '"DM Mono",monospace', marginTop: '2px', letterSpacing: '-0.5px' },
   potHint: { fontSize: '10px', color: '#555', marginTop: '8px', fontStyle: 'italic' as const },
   communityArea: { position: 'absolute' as const, top: '26%', left: '50%', transform: 'translate(-50%,-50%)', display: 'flex', gap: '6px', justifyContent: 'center', padding: '8px 0', zIndex: 3 },
-  holeArea: { position: 'absolute' as const, bottom: '32%', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '8px', zIndex: 4, padding: '6px 14px', background: 'rgba(0,0,0,0.8)', borderRadius: '10px', border: '2px solid rgba(232,220,200,0.3)', boxShadow: '0 6px 16px rgba(0,0,0,0.6)' },
+  holeArea: { position: 'absolute' as const, bottom: '2%', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '8px', zIndex: 4, padding: '6px 14px', background: 'rgba(0,0,0,0.8)', borderRadius: '10px', border: '2px solid rgba(232,220,200,0.3)', boxShadow: '0 6px 16px rgba(0,0,0,0.6)' },
   seatsContainer: { position: 'absolute' as const, top: 0, left: 0, right: 0, bottom: 0 },
   seatWrap: { position: 'absolute' as const, zIndex: 1 },
-  seatBetChips: { position: 'absolute' as const, top: '-36px', left: '50%', transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', animation: 'chipBet 0.4s cubic-bezier(.25,.9,.3,1.2) both' },
+  seatBetChips: { position: 'absolute' as const, top: '50%', left: 'calc(100% + 10px)', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', animation: 'chipBet 0.4s cubic-bezier(.25,.9,.3,1.2) both', zIndex: 3 },
   seat: { background: 'linear-gradient(180deg, #15181b 0%, #0c0e10 100%)', border: '1px solid #1f2328', borderRadius: '10px', padding: '8px 10px', minWidth: '120px', textAlign: 'center' as const, position: 'relative' as const, transition: 'all 0.3s ease', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' },
   seatMe: { borderColor: '#7ECFB3', background: 'linear-gradient(180deg, rgba(126,207,179,0.12) 0%, #0c1512 100%)' },
   seatTurn: { borderColor: '#E8C07E', boxShadow: '0 0 20px rgba(232,192,126,0.55), 0 2px 8px rgba(0,0,0,0.5)' },
