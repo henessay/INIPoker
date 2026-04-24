@@ -1616,17 +1616,12 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
     const hasAnyUsableSalt = lookupSalt() !== null
 
-    // Hard rate-limit: never let auto-loop fire more than once per 6 seconds.
-    // Previous version could spam 500+ tx per minute because every wagmi
-    // refetch (every 4s) re-ran the effect, and failed runAuto cleared the
-    // lock after 4-5s. That produced ERR_INSUFFICIENT_RESOURCES in the
-    // browser (2000+ dealAttempts observed). This cap protects the RPC,
-    // the browser, and the user's Keplr session.
-    const now = Date.now()
-    if (now - lastAutoFireRef.current < 6000) {
-      console.log('[AUTO-RATE] last fire was', now - lastAutoFireRef.current, 'ms ago, skipping')
-      return
-    }
+    // Global rate cap intentionally removed. Individual actions have their
+    // own per-action cooldowns (MIN_COMMIT_RETRY_INTERVAL_MS,
+    // MIN_DEAL_RETRY_INTERVAL_MS, MIN_GLOBAL_AUTO_TX_INTERVAL_MS=2s).
+    // The old 6s global cap prevented the NEXT hand's commit from firing
+    // even after a successful deal, because it kept the timestamp from the
+    // previous hand's action.
     // Circuit breaker: if we tried the same hand's deal/commit 4+ times and
     // every attempt reverted, something is wrong on-chain (peer race,
     // stale state, chain stall). STOP auto-loop for this hand entirely —
