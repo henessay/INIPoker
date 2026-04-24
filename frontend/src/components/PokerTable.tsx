@@ -761,6 +761,17 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
 
   // Auto-loop state must be defined before handlers so they can reset it.
   const autoBusyRef = useRef(false)
+  // Tracks when actionPending became true. Used by SETTLED-CLEAR to avoid
+  // racing a freshly-fired auto-loop tx (clearing the flag 5ms after it was
+  // set would drop the commit we just kicked off).
+  const actionPendingSinceRef = useRef<number>(0)
+  useEffect(() => {
+    if (actionPending && actionPendingSinceRef.current === 0) {
+      actionPendingSinceRef.current = Date.now()
+    } else if (!actionPending) {
+      actionPendingSinceRef.current = 0
+    }
+  }, [actionPending])
   const lastAutoKeyRef = useRef<string | null>(null)
   const dealFollowerWaitRef = useRef<number>(0)
   // Circuit breaker: cap deal retry attempts per handId. Without this,
@@ -829,9 +840,18 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       // might still be true and block the auto-loop forever. Clearing here
       // is safe because genuine pending txs inside mid-hand never reach
       // this branch — we gate on status === 0 || 7.
+      //
+      // Age guard: only force-clear if actionPending has been true for at
+      // least 3 seconds. Otherwise we race a freshly-fired commit/deal:
+      // auto-loop sets actionPending=true, this effect clears it immediately,
+      // auto-loop fires again, ad infinitum. We rely on
+      // `actionPendingSinceRef` maintained by the watchdog below.
       if (actionPending) {
-        console.log('[SETTLED-CLEAR] actionPending was true — force-clearing')
-        setActionPending(false)
+        const pendingAge = actionPendingSinceRef.current > 0 ? Date.now() - actionPendingSinceRef.current : 0
+        if (pendingAge > 3000) {
+          console.log('[SETTLED-CLEAR] actionPending was stuck for', pendingAge, 'ms — force-clearing')
+          setActionPending(false)
+        }
       }
     }
     if (localStatus && /Revealing|Evaluating|Settling|Waiting for showdown/i.test(localStatus)) {
@@ -1013,12 +1033,11 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
           autoBusyRef.current = false
           lastAutoKeyRef.current = null
           dealFollowerWaitRef.current = 0
-          // Force resync mode — blocks auto-loop until wagmi catches up.
+          // WebSocket sync-server will deliver the new handId/status within
+          // ~1s of the chain tx confirming. No need to cascade refetches —
+          // just refresh revealed-cards (which isn't in WS) and balance.
           setResyncingHand(true)
-          // Aggressive hard-refetch cascade (clears cache + refetches).
-          setTimeout(hardRefresh, 100)
-          setTimeout(hardRefresh, 800)
-          setTimeout(hardRefresh, 1800)
+          setTimeout(refreshAll, 500)
           return
         }
       } catch (probeErr) {
@@ -1807,50 +1826,26 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       handId, isSeated, myPlayer?.hasRevealed, myPlayer?.chips, myPlayer?.isActive, playerCount,
       refreshAll, saltKey, saltKeyPrefix, saltsCommitted, sessionAccount, status, tableBusy, actionPending, sittingDown, leaving, lookupSalt])
 
-  // Desync probe: every 3s probe on-chain (tableId, handId, status) directly.
-  // wagmi's refetchInterval stalls sometimes (RPC hiccup, React-Query cache).
-  // When peer advances the hand we MUST see it fast, otherwise we keep firing
-  // commitSaltFor on the stale hand and spamming "Hand started (by peer)".
-  // If on-chain handId > our local handId, we:
-  //   1. Set resyncingHand=true (blocks auto-loop commit/deal)
-  //   2. Force refetch wagmi hooks
-  //   3. Clear lastAutoKeyRef so a fresh tick runs on new state
+  // Desync watcher — WebSocket edition.
+  // The sync-server broadcasts session state within ~1s of any on-chain
+  // change, so we trust wsGameState as the source of truth. We still track
+  // dbgOnChainHandId for the debug overlay (it's the handId the WS has
+  // confirmed), and flip resyncingHand briefly when the WS view updates in
+  // a way that invalidates our auto-loop's plan (e.g. peer started hand).
   useEffect(() => {
-    if (!isSeated && !sessionAccount) return
-    let cancelled = false
-    const probe = async () => {
-      try {
-        const svProbe = await readSessionView(publicClient, tableId)
-        if (cancelled) return
-        if (!svProbe) return
-        const chainHandId = svProbe.handId
-        const chainStatus = svProbe.status
-        lastProbeRef.current = Date.now()
-        setDbgOnChainHandId(chainHandId)
-        setDbgOnChainStatus(chainStatus)
-        // Desync detected: chain is ahead of wagmi cache.
-        if (chainHandId > handId || (chainHandId === handId && chainStatus !== status && (status === 0 || status === 7) && chainStatus >= 2 && chainStatus <= 5)) {
-          console.warn('[DESYNC] local=', handId, '/', status, 'chain=', chainHandId, '/', chainStatus, '— forcing resync')
-          setResyncingHand(true)
-          setLocalError(null)
-          setDbgLastError(null)
-          autoBusyRef.current = false
-          lastAutoKeyRef.current = null
-          dealFollowerWaitRef.current = 0
-          hardRefresh()
-        } else if (resyncingHand && chainHandId === handId) {
-          // Caught up.
-          console.log('[DESYNC] resolved — local now matches chain')
-          setResyncingHand(false)
-        }
-      } catch (e) {
-        // Silent — transient RPC issues are fine, wagmi still polls.
-      }
+    if (!wsGameState?.session) return
+    const chainHandId = wsGameState.session.handId
+    const chainStatus = wsGameState.session.status
+    setDbgOnChainHandId(chainHandId)
+    setDbgOnChainStatus(chainStatus)
+    // Detect the "peer started hand" transition: we thought we were in
+    // Waiting/Settled but WS shows PreFlop or later on the next handId.
+    if (resyncingHand) {
+      // Clear resync flag as soon as WS catches up (state is fresh already).
+      console.log('[DESYNC] resolved via WS update')
+      setResyncingHand(false)
     }
-    probe()
-    const id = setInterval(probe, 5000)
-    return () => { cancelled = true; clearInterval(id) }
-  }, [isSeated, sessionAccount, tableId, handId, status, resyncingHand, publicClient, hardRefresh])
+  }, [wsGameState?.session?.handId, wsGameState?.session?.status, resyncingHand])
 
   // Watchdog: every 2s check if we've been stuck. Three stall modes:
   //   (1) autoBusyRef=true for >8s in same state — an action never completed
@@ -1862,7 +1857,6 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
   //       is now blocking the entire auto-loop from starting the next hand
   // Any of these: clear relevant state and force a retry.
   const watchdogStateRef = useRef<{ key: string; at: number }>({ key: '', at: 0 })
-  const actionPendingSinceRef = useRef<number>(0)
   useEffect(() => {
     if (!isSeated || !sessionAccount) return
     const interval = setInterval(() => {
@@ -1885,17 +1879,15 @@ export default function PokerTable({ tableId, tableName, bigBlind, onBack }: Pok
       // Settled/Waiting where no legit table tx should take long. During
       // mid-hand statuses a short actionPending is a normal tx wait and
       // must not be force-cleared.
-      if (actionPending) {
-        if (actionPendingSinceRef.current === 0) actionPendingSinceRef.current = now
+      // actionPendingSinceRef is maintained by a separate effect — watchdog
+      // only reads it.
+      if (actionPending && actionPendingSinceRef.current > 0) {
         const pendingFor = now - actionPendingSinceRef.current
         if ((status === 0 || status === 7) && pendingFor > 5_000) {
           console.warn(`[WATCHDOG] actionPending stuck ${pendingFor}ms in idle status=${status} — clearing to unblock auto-loop`)
           setActionPending(false)
-          actionPendingSinceRef.current = 0
           refreshAll()
         }
-      } else {
-        actionPendingSinceRef.current = 0
       }
     }, 2000)
     return () => clearInterval(interval)
