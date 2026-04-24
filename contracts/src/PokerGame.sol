@@ -637,6 +637,17 @@ contract PokerGame is IVRFConsumer {
 
         uint256 cashOut = p.chips;
         uint8 seat = p.seatIndex;
+        // Keep saltsCommitted / saltsRevealed in sync with the remaining
+        // seated players. Without this, a player who leaves mid-session
+        // after committing a salt would leave the counter stuck above the
+        // new playerCount, causing the next hand's _requestDeal to revert
+        // with NotAllSaltsCommitted or to fire prematurely.
+        if (p.saltHash != bytes32(0)) {
+            if (s.saltsCommitted > 0) s.saltsCommitted--;
+        }
+        if (p.hasRevealed) {
+            if (s.saltsRevealed > 0) s.saltsRevealed--;
+        }
         delete playerStates[tableId][player];
         _removeSeat(tableId, seat);
 
@@ -982,8 +993,24 @@ contract PokerGame is IVRFConsumer {
         Session storage s = sessions[tableId];
         s.saltsCommitted = 0;
         s.saltsRevealed = 0;
-        for (uint8 i = 0; i < s.playerCount; i++) {
-            playerStates[tableId][seatMap[tableId][i]].saltHash = bytes32(0);
+        // Iterate up to maxPlayers (not playerCount). A player may have
+        // been seated earlier in the session, committed a salt, then left
+        // or been pruned — their saltHash would otherwise persist forever
+        // and cause the next _commitSalt to revert SaltAlreadyCommitted,
+        // or saltsCommitted to drift out of sync with playerCount.
+        //
+        // Also clear hasRevealed and holeCommitment so the next hand
+        // starts from a clean state. (_resetSalts used to leave holeCommitment
+        // set, which caused the frontend to falsely detect "already
+        // committed" for the new hand.)
+        for (uint8 i = 0; i < s.maxPlayers; i++) {
+            address player = seatMap[tableId][i];
+            if (player != address(0)) {
+                PlayerState storage p = playerStates[tableId][player];
+                p.saltHash = bytes32(0);
+                p.hasRevealed = false;
+                p.holeCommitment = bytes32(0);
+            }
         }
     }
 
@@ -1033,6 +1060,15 @@ contract PokerGame is IVRFConsumer {
         while (i < s.playerCount) {
             address player = seatMap[tableId][i];
             if (playerStates[tableId][player].chips == 0) {
+                // Keep saltsCommitted / saltsRevealed consistent with playerCount.
+                // If the busted player had committed a salt or already revealed,
+                // decrement so the counters match the remaining seated players.
+                if (playerStates[tableId][player].saltHash != bytes32(0)) {
+                    if (s.saltsCommitted > 0) s.saltsCommitted--;
+                }
+                if (playerStates[tableId][player].hasRevealed) {
+                    if (s.saltsRevealed > 0) s.saltsRevealed--;
+                }
                 delete playerStates[tableId][player];
                 _removeSeat(tableId, i);
                 emit PlayerLeft(tableId, player, 0);
